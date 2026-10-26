@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef, createContext, useContext } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext } from 'react';
 import {
-  View, Text, ScrollView, FlatList, Pressable, TextInput, Image, Modal, Alert,
+  View, Text, ScrollView, FlatList, Pressable, TextInput, Image, Modal,
   StyleSheet, useColorScheme, useWindowDimensions, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,42 +11,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { loadSession, signIn, signOut } from '../auth';
+import { authFetch, API_URL } from '../auth';
+import { useAuth } from '../AuthGate';
 
 /* ───────────── Data & konstanta ───────────── */
 
-const STORE_KEY = 'aduan-mobile-account-v1';
 const THEME_KEY = 'aduan-mobile-theme';
 const CATEGORIES = ['Infrastruktur', 'Parkir Liar', 'Pendidikan', 'Kebersihan'];
-const AGENCY = { Infrastruktur: 'Dinas PUPR', 'Parkir Liar': 'Dishub', Pendidikan: 'Disdik', Kebersihan: 'DLH' };
 const CATEGORY_UI = [
   { name: 'Infrastruktur', icon: 'road', color: '#2563eb' },
   { name: 'Parkir Liar', icon: 'car', color: '#4f46e5' },
   { name: 'Pendidikan', icon: 'school', color: '#059669' },
   { name: 'Kebersihan', icon: 'trash', color: '#d97706' },
 ];
-
-const INITIAL = {
-  profile: {
-    name: 'Rian Ardiansyah', email: 'rian@example.com', phone: '0812 0000 9042',
-    address: 'Jl. Melati No. 12, Kelurahan Melati', nik: '•••• •••• •••• 9042',
-  },
-  reports: [
-    { id: 'ADR-9042', title: 'Penertiban Parkir Liar di Pasar Sentral', category: 'Parkir Liar',
-      description: 'Kendaraan parkir di bahu jalan dan menghambat akses masuk pasar.',
-      location: 'Area parkir Pasar Sentral', createdAt: '2026-10-01T08:15:00+07:00',
-      status: 'Diproses', progress: 65, agency: 'Dishub' },
-    { id: 'ADR-9038', title: 'Lampu penerangan jalan padam', category: 'Infrastruktur',
-      description: 'Lampu jalan di depan gang tidak menyala pada malam hari.',
-      location: 'Jl. Melati, Gang 2', createdAt: '2026-10-01T07:30:00+07:00',
-      status: 'Dibuat', progress: 0, agency: 'Dinas PUPR' },
-    { id: 'ADR-9021', title: 'Sampah menumpuk di taman', category: 'Kebersihan',
-      description: 'Sampah di sekitar tempat duduk taman belum diangkut.',
-      location: 'Taman Kota', createdAt: '2026-09-29T10:00:00+07:00',
-      status: 'Selesai', progress: 100, agency: 'DLH' },
-  ],
-  read: [],
-};
+const SURVEI = [
+  { emoji: '😞', label: 'Tidak puas', skor: 1 },
+  { emoji: '😐', label: 'Biasa saja', skor: 3 },
+  { emoji: '😊', label: 'Puas', skor: 4 },
+  { emoji: '🤩', label: 'Sangat puas', skor: 5 },
+];
 
 const CAMERAS = [
   { id: 'CAM-01', name: 'Pasar Sentral', location: 'Area parkir pasar', online: true, condition: 'Padat', agency: 'Dishub' },
@@ -94,17 +77,33 @@ const stamp = (v) => {
   return `${d.getUTCDate()} ${BULAN[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${pad(d.getUTCHours())}.${pad(d.getUTCMinutes())} WIB`;
 };
 
-function buildEvents(reports) {
-  return reports.flatMap((r) => {
-    const steps = [{ status: 'Dibuat', offset: 0, body: 'Aduan berhasil dibuat dan menunggu verifikasi.', icon: 'file-circle-plus' }];
-    if (r.status !== 'Dibuat') steps.push({ status: 'Diproses', offset: 30, body: `Aduan diterima ${r.agency} dan sedang ditangani.`, icon: 'gears' });
-    if (r.status === 'Selesai') steps.push({ status: 'Selesai', offset: 90, body: 'Penanganan selesai. Terima kasih atas partisipasi Anda.', icon: 'circle-check' });
-    return steps.map((e) => ({
-      ...e, id: `${r.id}-${e.status}`, report: r.id, title: r.title,
-      time: new Date(new Date(r.createdAt).getTime() + e.offset * 60000).toISOString(),
-    }));
-  }).sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
-}
+/* ───────────── Pemetaan data server → tampilan ───────────── */
+
+// SQLite menyimpan waktu UTC "YYYY-MM-DD HH:MM:SS"
+const toIso = (s) => new Date(String(s).replace(' ', 'T') + 'Z').toISOString();
+const STATUS_UI = { Verifikasi: 'Dibuat', Diproses: 'Diproses', Selesai: 'Selesai' };
+const EVENT_ICON = { Dibuat: 'file-circle-plus', Diproses: 'gears', Selesai: 'circle-check' };
+const EVENT_BODY = { Dibuat: 'Aduan berhasil dibuat dan menunggu verifikasi.', Diproses: 'Aduan sedang ditangani.', Selesai: 'Penanganan selesai. Terima kasih atas partisipasi Anda.' };
+
+const fromPelapor = (p) => ({ name: p.nama, username: p.username, address: p.alamat || '', nik: p.nik });
+const maskNik = (n) => { const s = String(n || ''); return s.length > 4 ? '•••• •••• •••• ' + s.slice(-4) : s; };
+
+const mapReport = (r) => {
+  const m = (r.media || [])[0];
+  return {
+    id: r.id_aduan, title: r.topik, category: r.label_kategori, description: r.deskripsi || '-',
+    location: r.lokasi_kejadian || '-', createdAt: toIso(r.tanggal_aduan),
+    status: STATUS_UI[r.status] || r.status, progress: r.progres || 0, agency: r.dinas,
+    ...(m ? { media: { uri: API_URL + m.url_file, kind: m.tipe_media === 'video' ? 'video' : 'photo' } } : {}),
+  };
+};
+const mapEvent = (p) => {
+  const status = STATUS_UI[p.status_tahapan] || p.status_tahapan;
+  return {
+    id: `P-${p.id_progres}`, report: p.id_aduan, title: p.topik, status,
+    icon: EVENT_ICON[status] || 'bell', body: p.catatan_petugas || EVENT_BODY[status] || '', time: toIso(p.updated_at),
+  };
+};
 
 /* ───────────── Tema ───────────── */
 
@@ -330,7 +329,7 @@ function CctvCard() {
   );
 }
 
-function HomePage({ data, go, onCreate }) {
+function HomePage({ data, go, onCreate, onVote }) {
   const { c } = useTheme();
   const [vote, setVote] = useState(null);
   const r = data.reports[0];
@@ -381,11 +380,11 @@ function HomePage({ data, go, onCreate }) {
         </View>
         {vote == null ? (
           <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
-            {['😞', '😐', '😊', '🤩'].map((e, i) => (
-              <Pressable key={e} onPress={() => setVote(i)} style={{ padding: 6 }}><Text style={{ fontSize: 24 }}>{e}</Text></Pressable>
+            {SURVEI.map((s, i) => (
+              <Pressable key={s.emoji} onPress={() => { setVote(i); onVote(s); }} style={{ padding: 6 }}><Text style={{ fontSize: 24 }}>{s.emoji}</Text></Pressable>
             ))}
           </View>
-        ) : <Txt small style={{ color: c.indigoTitle, paddingVertical: 8 }}>Terima kasih atas penilaian Anda {['😞', '😐', '😊', '🤩'][vote]}</Txt>}
+        ) : <Txt small style={{ color: c.indigoTitle, paddingVertical: 8 }}>Terima kasih atas penilaian Anda {SURVEI[vote].emoji}</Txt>}
       </View>
 
       <CctvCard />
@@ -396,9 +395,6 @@ function HomePage({ data, go, onCreate }) {
 /* ───────────── Aduan ───────────── */
 
 function ReportCard({ r, onNotif }) {
-  const { c } = useTheme();
-  const hasGeo = Number.isFinite(r.latitude) && Number.isFinite(r.longitude);
-  const geo = hasGeo ? `📍 ${r.latitude.toFixed(6)}, ${r.longitude.toFixed(6)}` : 'Geotag belum ditentukan';
   return (
     <Card>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
@@ -407,8 +403,10 @@ function ReportCard({ r, onNotif }) {
       <Txt bold style={{ fontSize: 14 }}>{r.title}</Txt>
       <Txt small secondary style={{ marginTop: 4 }}>{r.category} · {stamp(r.createdAt)}</Txt>
       <Txt style={{ marginTop: 5 }}>{r.description}</Txt>
-      <Txt small secondary style={{ marginTop: 5 }}><FontAwesome6 name="location-dot" size={10} color={c.secondary} /> {r.location}</Txt>
-      {r.media ? <SavedMedia media={r.media} caption={geo} /> : hasGeo ? <Txt small secondary style={{ marginTop: 4 }}>{geo}</Txt> : null}
+      <Txt small secondary style={{ marginTop: 5 }}>
+        <FontAwesome6 name="location-dot" size={10} color="#64748b" /> {r.location}
+      </Txt>
+      {r.media ? <SavedMedia media={r.media} caption="Lampiran aduan" /> : null}
       <Progress value={r.progress} />
       <Txt small secondary style={{ marginBottom: 8 }}>Progress {r.progress}% · {r.agency}</Txt>
       <Btn title="Lihat notifikasi" onPress={() => onNotif(r.id)} />
@@ -421,7 +419,7 @@ function ReportsPage({ data, filter, setFilter, onCreate, onNotif }) {
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
       <PageTop title="Aduan Saya" right={<Btn primary title="+ Tambah" onPress={() => onCreate()} />} />
-      <Txt small secondary style={{ marginBottom: 12 }}>Aduan milik akun Anda · Data simulasi</Txt>
+      <Txt small secondary style={{ marginBottom: 12 }}>Aduan milik akun Anda</Txt>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
         {['Semua', 'Dibuat', 'Diproses', 'Selesai'].map((f) => <Btn key={f} title={f} active={filter === f} onPress={() => setFilter(f)} />)}
       </View>
@@ -437,7 +435,7 @@ function ReportsPage({ data, filter, setFilter, onCreate, onNotif }) {
   );
 }
 
-function NewReportPage({ initialCategory, onCancel, onSubmit }) {
+function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
   const { c } = useTheme();
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState(initialCategory || CATEGORIES[0]);
@@ -447,8 +445,9 @@ function NewReportPage({ initialCategory, onCancel, onSubmit }) {
   const [lng, setLng] = useState('');
   const [media, setMedia] = useState(null);
   const [msg, setMsg] = useState('');
-  const [geoMsg, setGeoMsg] = useState('Marker menampilkan koordinat lokasi kejadian. Lokasi dapat diisi manual.');
+  const [geoMsg, setGeoMsg] = useState('Koordinat (opsional) akan ditambahkan ke keterangan lokasi.');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const pick = async (kind, source) => {
     try {
@@ -482,22 +481,28 @@ function NewReportPage({ initialCategory, onCancel, onSubmit }) {
     return Number.isFinite(a) && Number.isFinite(b) && lat && lng ? `Lokasi kejadian · ${a.toFixed(6)}, ${b.toFixed(6)}` : 'Lengkapi koordinat lokasi';
   };
 
-  const submit = () => {
+  const submit = async () => {
+    if (busy) return;
     const t = title.trim(), d = description.trim(), l = location.trim();
     if (!t || !d || !l) { setError('Lengkapi semua kolom aduan.'); return; }
-    let geo = {};
+    let lokasi = l;
     if (lat.trim() || lng.trim()) {
       const a = Number(lat), b = Number(lng);
       if (!lat.trim() || !lng.trim() || !Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 90 || Math.abs(b) > 180) {
         setError('Isi latitude dan longitude yang valid.'); return;
       }
-      geo = { latitude: a, longitude: b };
+      lokasi = `${l} (${a.toFixed(6)}, ${b.toFixed(6)})`;
     }
-    onSubmit({
-      id: `ADR-M-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-      title: t, category, description: d, location: l, createdAt: new Date().toISOString(),
-      status: 'Dibuat', progress: 0, agency: AGENCY[category], ...geo, ...(media ? { media } : {}),
-    });
+    const kat = kategori.find((k) => k.label_kategori === category);
+    if (!kat) { setError(`Kategori "${category}" belum ada di database server.`); return; }
+    setError('');
+    setBusy(true);
+    try {
+      await onSubmit({ id_kategori: kat.id_kategori, topik: t, deskripsi: d, lokasi_kejadian: lokasi, media });
+    } catch (e) {
+      setError(e.message || 'Aduan gagal dikirim.');
+      setBusy(false);
+    }
   };
 
   return (
@@ -544,7 +549,7 @@ function NewReportPage({ initialCategory, onCancel, onSubmit }) {
           <Txt secondary style={{ fontSize: 10 }}>{geoMsg}</Txt>
 
           {!!error && <Txt small style={{ color: '#e87979', marginTop: 10 }}>{error}</Txt>}
-          <Btn primary title="Kirim Aduan" onPress={submit} style={{ marginTop: 14 }} />
+          <Btn primary title={busy ? 'Mengirim…' : 'Kirim Aduan'} onPress={submit} disabled={busy} style={{ marginTop: 14 }} />
         </Card>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -554,13 +559,12 @@ function NewReportPage({ initialCategory, onCancel, onSubmit }) {
 /* ───────────── Notifikasi ───────────── */
 
 function NotificationsPage({ data, only, onReadAll, onAll, go }) {
-  const { c } = useTheme();
-  const entries = buildEvents(data.reports).filter((e) => !only || e.report === only);
+  const entries = data.events.filter((e) => !only || e.report === only);
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
       <PageTop title="Notifikasi" right={<Btn title="Tandai dibaca" onPress={onReadAll} />} />
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <Txt small secondary style={{ flex: 1 }}>Simulasi pemberitahuan aduan dibuat, diproses, dan selesai.</Txt>
+        <Txt small secondary style={{ flex: 1 }}>Pemberitahuan perkembangan aduan Anda.</Txt>
         {only ? <Btn title="Semua" onPress={onAll} /> : null}
       </View>
       {entries.length ? entries.map((e) => (
@@ -583,64 +587,6 @@ function NotificationsPage({ data, only, onReadAll, onAll, go }) {
   );
 }
 
-/* ───────────── Login ───────────── */
-
-function LoginPage({ onLogin }) {
-  const { c } = useTheme();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [show, setShow] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const submit = async () => {
-    if (busy) return;
-    if (!email.trim() || !password) { setError('Isi email dan kata sandi.'); return; }
-    setBusy(true);
-    setError('');
-    try {
-      onLogin(await signIn(email, password));
-    } catch (e) {
-      setError(e.message);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 16, paddingBottom: 40 }}
-        keyboardShouldPersistTaps="handled">
-        <View style={{ alignItems: 'center', marginBottom: 18 }}>
-          <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: c.indigoBg, borderWidth: 1,
-            borderColor: c.indigoEdge, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-            <FontAwesome6 name="bullhorn" size={22} color={c.indigoText} />
-          </View>
-          <Txt style={{ fontSize: 20, fontWeight: '800', color: c.title }}>Masuk ke Aduan Warga</Txt>
-          <Txt secondary style={{ marginTop: 4, textAlign: 'center' }}>
-            Masuk untuk membuat aduan dan memantau penanganannya.
-          </Txt>
-        </View>
-        <Card>
-          <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address"
-            autoCapitalize="none" autoComplete="email" autoCorrect={false} maxLength={160} returnKeyType="next" />
-          <Field label="Kata sandi" value={password} onChangeText={setPassword} secureTextEntry={!show}
-            autoCapitalize="none" autoComplete="password" maxLength={100} returnKeyType="go" onSubmitEditing={submit} />
-          <Pressable onPress={() => setShow(!show)} hitSlop={8}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <FontAwesome6 name={show ? 'eye-slash' : 'eye'} size={12} color={c.link} />
-            <Txt small style={{ color: c.link }}>{show ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}</Txt>
-          </Pressable>
-          {!!error && <Txt small style={{ color: '#e87979', marginTop: 8 }}>{error}</Txt>}
-          <Btn primary title={busy ? 'Memeriksa…' : 'Masuk'} onPress={submit} disabled={busy} style={{ marginTop: 12 }} />
-        </Card>
-        <Txt small secondary style={{ textAlign: 'center', marginTop: 4 }}>
-          Akun contoh: rian@example.com, kata sandi warga123. Login ini simulasi dan hanya diperiksa di perangkat.
-        </Txt>
-      </ScrollView>
-    </KeyboardAvoidingView>
-  );
-}
-
 /* ───────────── Profil ───────────── */
 
 function Accordion({ title, children }) {
@@ -659,7 +605,7 @@ function Accordion({ title, children }) {
 
 function ProfilePage({ data, onEdit, onLogout }) {
   const p = data.profile;
-  const rows = [['Nama', p.name], ['Email', p.email], ['No. HP', p.phone], ['Alamat', p.address], ['NIK', p.nik], ['Jumlah aduan', String(data.reports.length)]];
+  const rows = [['Nama', p.name], ['Username', p.username], ['Alamat', p.address || '-'], ['NIK', maskNik(p.nik)], ['Jumlah aduan', String(data.reports.length)]];
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
       <PageTop title="Profil Pengadu" right={<Btn title="Edit" onPress={onEdit} />} />
@@ -668,7 +614,7 @@ function ProfilePage({ data, onEdit, onLogout }) {
           <Avatar size={50} />
           <View style={{ flex: 1, gap: 4 }}>
             <Txt bold style={{ fontSize: 15 }}>{p.name}</Txt>
-            <Txt small secondary>Akun warga · Profil simulasi</Txt>
+            <Txt small secondary>Akun warga · @{p.username}</Txt>
             <View style={{ alignSelf: 'flex-start' }}><Badge status="Selesai" /></View>
           </View>
         </View>
@@ -684,10 +630,10 @@ function ProfilePage({ data, onEdit, onLogout }) {
       </Card>
       <Card>
         <Txt bold style={{ marginBottom: 4 }}>Akun & aplikasi</Txt>
-        <Accordion title="Keamanan akun">Nomor identitas ditampilkan tersamarkan. Login pada simulasi ini memakai akun contoh dan hanya diperiksa di perangkat. Penggantian kata sandi dan verifikasi identitas belum tersedia.</Accordion>
-        <Accordion title="Privasi & penyimpanan">Perubahan profil dan aduan disimpan pada perangkat ini. Gunakan data dummy. Data belum dikirim ke server atau dashboard.</Accordion>
+        <Accordion title="Keamanan akun">Nomor identitas ditampilkan tersamarkan. Kata sandi disimpan dalam bentuk terenkripsi (hash) di server. Penggantian kata sandi belum tersedia.</Accordion>
+        <Accordion title="Privasi & penyimpanan">Profil dan aduan Anda tersimpan di server aduan warga, sehingga tetap ada saat Anda masuk dari perangkat lain.</Accordion>
         <Accordion title="Bantuan penggunaan">Buka Aduan → Tambah untuk membuat aduan. Pantau tahapan Dibuat, Diproses, dan Selesai di tab Notif. Pilih lokasi pada CCTV untuk memutar video simulasi.</Accordion>
-        <Accordion title="Tentang aplikasi">Aduan Masyarakat · Versi simulasi 1.0. Sarana contoh pengaduan fasilitas dan layanan publik. Informasi serta notifikasi merupakan data dummy.</Accordion>
+        <Accordion title="Tentang aplikasi">Aduan Masyarakat · Sarana pengaduan fasilitas dan layanan publik. Berita dan CCTV pada beranda merupakan contoh.</Accordion>
         <Btn title="Keluar" icon="right-from-bracket" onPress={onLogout} style={{ marginTop: 10 }} />
       </Card>
     </ScrollView>
@@ -695,26 +641,26 @@ function ProfilePage({ data, onEdit, onLogout }) {
 }
 
 function EditProfilePage({ profile, onCancel, onSave }) {
-  const [f, setF] = useState({ name: profile.name, email: profile.email, phone: profile.phone, address: profile.address });
+  const [f, setF] = useState({ nama: profile.name, alamat: profile.address });
   const [error, setError] = useState('');
-  const set = (k) => (v) => setF((o) => ({ ...o, [k]: v }));
-  const save = () => {
-    const next = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.trim()]));
-    if (Object.values(next).some((v) => !v)) { setError('Lengkapi data profil.'); return; }
-    onSave({ ...profile, ...next });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (busy) return;
+    if (!f.nama.trim()) { setError('Nama wajib diisi.'); return; }
+    setBusy(true); setError('');
+    try { await onSave({ nama: f.nama.trim(), alamat: f.alamat.trim() }); }
+    catch (e) { setError(e.message || 'Gagal menyimpan.'); setBusy(false); }
   };
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <PageTop title="Edit Profil" right={<Btn title="Batal" onPress={onCancel} />} />
         <Card>
-          <Field label="Nama" value={f.name} onChangeText={set('name')} maxLength={120} />
-          <Field label="Email" value={f.email} onChangeText={set('email')} maxLength={160} keyboardType="email-address" autoCapitalize="none" />
-          <Field label="No. HP" value={f.phone} onChangeText={set('phone')} maxLength={30} keyboardType="phone-pad" />
-          <Field label="Alamat" value={f.address} onChangeText={set('address')} maxLength={250} />
-          <Txt small secondary>NIK tersamarkan dan tidak diubah pada simulasi.</Txt>
+          <Field label="Nama" value={f.nama} onChangeText={(v) => setF((o) => ({ ...o, nama: v }))} maxLength={120} />
+          <Field label="Alamat" value={f.alamat} onChangeText={(v) => setF((o) => ({ ...o, alamat: v }))} maxLength={250} />
+          <Txt small secondary>NIK dan username tidak dapat diubah.</Txt>
           {!!error && <Txt small style={{ color: '#e87979', marginTop: 8 }}>{error}</Txt>}
-          <Btn primary title="Simpan Profil" onPress={save} style={{ marginTop: 12 }} />
+          <Btn primary title={busy ? 'Menyimpan…' : 'Simpan Profil'} onPress={save} disabled={busy} style={{ marginTop: 12 }} />
         </Card>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -747,32 +693,46 @@ function TabBar({ page, go }) {
 /* ───────────── App ───────────── */
 
 export default function App() {
+  const { session, logout } = useAuth(); // login & sesi diurus AuthGate
+  const uid = session.pelapor.id_pelapor;
+  const READ_KEY = `aduan-read-${uid}`;
+
   const system = useColorScheme();
   const [pref, setPref] = useState('auto');
-  const [data, setData] = useState(INITIAL);
-  const [ready, setReady] = useState(false);
+  const [data, setData] = useState({ profile: fromPelapor(session.pelapor), reports: [], events: [], read: [] });
+  const [kategori, setKategori] = useState([]);
+  const [loadErr, setLoadErr] = useState('');
   const [page, setPage] = useState('home');
   const [creating, setCreating] = useState(null);
   const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState('Semua');
   const [notifOnly, setNotifOnly] = useState(null);
-  const [session, setSession] = useState(null);
+
+  // Ambil semua data milik akun ini dari server
+  const refresh = useCallback(async () => {
+    try {
+      const [me, aduan, notif] = await Promise.all([
+        authFetch('/api/me'), authFetch('/api/aduan'), authFetch('/api/notifikasi'),
+      ]);
+      setData((d) => ({ ...d, profile: fromPelapor(me), reports: aduan.map(mapReport), events: notif.map(mapEvent) }));
+      setLoadErr('');
+    } catch (e) {
+      if (/Sesi habis|Belum login/.test(e.message)) { logout(); return; }
+      setLoadErr(e.message || 'Gagal memuat data.');
+    }
+  }, [logout]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [d, t] = await Promise.all([AsyncStorage.getItem(STORE_KEY), AsyncStorage.getItem(THEME_KEY)]);
+        const [t, r] = await Promise.all([AsyncStorage.getItem(THEME_KEY), AsyncStorage.getItem(READ_KEY)]);
         if (t && ['auto', 'light', 'dark'].includes(t)) setPref(t);
-        if (d) {
-          const p = JSON.parse(d);
-          if (p?.profile && Array.isArray(p.reports)) setData({ ...p, read: Array.isArray(p.read) ? p.read : [] });
-        }
+        if (r) setData((d) => ({ ...d, read: JSON.parse(r) }));
       } catch {}
-      setSession(await loadSession());
-      setReady(true);
     })();
-  }, []);
-  useEffect(() => { if (ready) AsyncStorage.setItem(STORE_KEY, JSON.stringify(data)).catch(() => {}); }, [data, ready]);
+    authFetch('/api/kategori').then(setKategori).catch(() => {});
+    refresh();
+  }, [refresh, READ_KEY]);
 
   const dark = pref === 'auto' ? system === 'dark' : pref === 'dark';
   const theme = useMemo(() => ({ c: dark ? DARK : LIGHT, dark }), [dark]);
@@ -785,12 +745,47 @@ export default function App() {
   };
   const themeIcon = { auto: 'circle-half-stroke', light: 'sun', dark: 'moon' }[pref];
 
-  const go = (p) => { setCreating(null); setEditing(false); setNotifOnly(null); setPage(p); };
+  const go = (p) => { setCreating(null); setEditing(false); setNotifOnly(null); setPage(p); refresh(); };
   const startCreate = (category) => { setPage('reports'); setEditing(false); setCreating({ category }); };
 
-  const logout = async () => { await signOut(); setSession(null); go('home'); };
+  const submitReport = async ({ id_kategori, topik, deskripsi, lokasi_kejadian, media }) => {
+    const fd = new FormData();
+    fd.append('id_kategori', id_kategori);
+    fd.append('topik', topik);
+    fd.append('deskripsi', deskripsi);
+    fd.append('lokasi_kejadian', lokasi_kejadian);
+    if (media) {
+      const ext = media.kind === 'video' ? '.mp4' : '.jpg';
+      const name = /\.\w{2,4}$/.test(media.name) ? media.name : media.name + ext;
+      fd.append('tipe_media', media.kind === 'video' ? 'video' : 'foto_sebelum');
+      if (Platform.OS === 'web') {
+        const blob = await (await fetch(media.uri)).blob();
+        fd.append('file', blob, name);
+      } else {
+        fd.append('file', { uri: media.uri, name, type: media.kind === 'video' ? 'video/mp4' : 'image/jpeg' });
+      }
+    }
+    await authFetch('/api/aduan', { method: 'POST', body: fd });
+    await refresh();
+    setFilter('Semua');
+    setCreating(null);
+  };
 
-  if (!ready) return <View style={{ flex: 1, backgroundColor: c.screen }} />;
+  const saveProfile = async ({ nama, alamat }) => {
+    await authFetch('/api/me', { method: 'PATCH', body: { nama, alamat } });
+    await refresh();
+    setEditing(false);
+  };
+
+  const sendVote = (s) => {
+    authFetch('/api/survei', { method: 'POST', body: { skor: s.skor, label_kepuasan: s.label, emoji: s.emoji } }).catch(() => {});
+  };
+
+  const readAll = () => {
+    const ids = data.events.map((e) => e.id);
+    setData((d) => ({ ...d, read: ids }));
+    AsyncStorage.setItem(READ_KEY, JSON.stringify(ids)).catch(() => {});
+  };
 
   const themeToggle = (
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingTop: 4 }}>
@@ -802,31 +797,17 @@ export default function App() {
     </View>
   );
 
-  if (!session) {
-    return (
-      <ThemeCtx.Provider value={theme}>
-        <StatusBar style={dark ? 'light' : 'dark'} />
-        <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.screen }}>
-          {themeToggle}
-          <LoginPage onLogin={setSession} />
-        </SafeAreaView>
-      </ThemeCtx.Provider>
-    );
-  }
-
   let body;
   if (page === 'reports' && creating) {
-    body = <NewReportPage initialCategory={creating.category} onCancel={() => setCreating(null)}
-      onSubmit={(r) => { setData((d) => ({ ...d, reports: [r, ...d.reports] })); setFilter('Semua'); setCreating(null); }} />;
+    body = <NewReportPage initialCategory={creating.category} kategori={kategori}
+      onCancel={() => setCreating(null)} onSubmit={submitReport} />;
   } else if (page === 'profile' && editing) {
-    body = <EditProfilePage profile={data.profile} onCancel={() => setEditing(false)}
-      onSave={(profile) => { setData((d) => ({ ...d, profile })); setEditing(false); }} />;
-  } else if (page === 'home') body = <HomePage data={data} go={go} onCreate={startCreate} />;
+    body = <EditProfilePage profile={data.profile} onCancel={() => setEditing(false)} onSave={saveProfile} />;
+  } else if (page === 'home') body = <HomePage data={data} go={go} onCreate={startCreate} onVote={sendVote} />;
   else if (page === 'reports') body = <ReportsPage data={data} filter={filter} setFilter={setFilter} onCreate={startCreate}
     onNotif={(id) => { setNotifOnly(id); setPage('notifications'); }} />;
   else if (page === 'notifications') body = <NotificationsPage data={data} only={notifOnly} go={go}
-    onAll={() => setNotifOnly(null)}
-    onReadAll={() => setData((d) => ({ ...d, read: buildEvents(d.reports).map((e) => e.id) }))} />;
+    onAll={() => setNotifOnly(null)} onReadAll={readAll} />;
   else body = <ProfilePage data={data} onEdit={() => setEditing(true)} onLogout={logout} />;
 
   return (
@@ -834,6 +815,11 @@ export default function App() {
       <StatusBar style={dark ? 'light' : 'dark'} />
       <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.screen }}>
         {themeToggle}
+        {!!loadErr && (
+          <Pressable onPress={refresh} style={{ backgroundColor: '#fee2e2', paddingVertical: 8, paddingHorizontal: 16 }}>
+            <Text style={{ color: '#991b1b', fontSize: 11 }}>{loadErr} Ketuk untuk coba lagi.</Text>
+          </Pressable>
+        )}
         <View style={{ flex: 1 }}>{body}</View>
         <TabBar page={page} go={go} />
       </SafeAreaView>
