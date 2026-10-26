@@ -603,7 +603,7 @@ function Accordion({ title, children }) {
   );
 }
 
-function ProfilePage({ data, onEdit, onLogout }) {
+function ProfilePage({ data, onEdit, onChangePw, onLogout }) {
   const p = data.profile;
   const rows = [['Nama', p.name], ['Username', p.username], ['Alamat', p.address || '-'], ['NIK', maskNik(p.nik)], ['Jumlah aduan', String(data.reports.length)]];
   return (
@@ -630,11 +630,12 @@ function ProfilePage({ data, onEdit, onLogout }) {
       </Card>
       <Card>
         <Txt bold style={{ marginBottom: 4 }}>Akun & aplikasi</Txt>
-        <Accordion title="Keamanan akun">Nomor identitas ditampilkan tersamarkan. Kata sandi disimpan dalam bentuk terenkripsi (hash) di server. Penggantian kata sandi belum tersedia.</Accordion>
+        <Accordion title="Keamanan akun">Nomor identitas ditampilkan tersamarkan. Kata sandi disimpan dalam bentuk terenkripsi (hash) di server. Anda dapat menggantinya lewat tombol Ganti kata sandi.</Accordion>
         <Accordion title="Privasi & penyimpanan">Profil dan aduan Anda tersimpan di server aduan warga, sehingga tetap ada saat Anda masuk dari perangkat lain.</Accordion>
         <Accordion title="Bantuan penggunaan">Buka Aduan → Tambah untuk membuat aduan. Pantau tahapan Dibuat, Diproses, dan Selesai di tab Notif. Pilih lokasi pada CCTV untuk memutar video simulasi.</Accordion>
         <Accordion title="Tentang aplikasi">Aduan Masyarakat · Sarana pengaduan fasilitas dan layanan publik. Berita dan CCTV pada beranda merupakan contoh.</Accordion>
-        <Btn title="Keluar" icon="right-from-bracket" onPress={onLogout} style={{ marginTop: 10 }} />
+        <Btn title="Ganti kata sandi" icon="key" onPress={onChangePw} style={{ marginTop: 10 }} />
+        <Btn title="Keluar" icon="right-from-bracket" onPress={onLogout} style={{ marginTop: 8 }} />
       </Card>
     </ScrollView>
   );
@@ -661,6 +662,46 @@ function EditProfilePage({ profile, onCancel, onSave }) {
           <Txt small secondary>NIK dan username tidak dapat diubah.</Txt>
           {!!error && <Txt small style={{ color: '#e87979', marginTop: 8 }}>{error}</Txt>}
           <Btn primary title={busy ? 'Menyimpan…' : 'Simpan Profil'} onPress={save} disabled={busy} style={{ marginTop: 12 }} />
+        </Card>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function ChangePasswordPage({ onCancel, onSave }) {
+  const { c } = useTheme();
+  const [lama, setLama] = useState('');
+  const [baru, setBaru] = useState('');
+  const [ulang, setUlang] = useState('');
+  const [show, setShow] = useState(false);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (busy) return;
+    if (!lama || !baru || !ulang) { setError('Lengkapi semua kolom.'); return; }
+    if (baru.length < 6) { setError('Kata sandi baru minimal 6 karakter.'); return; }
+    if (baru !== ulang) { setError('Konfirmasi kata sandi tidak sama.'); return; }
+    if (baru === lama) { setError('Kata sandi baru harus berbeda dari yang lama.'); return; }
+    setBusy(true); setError('');
+    try { await onSave({ password_lama: lama, password_baru: baru }); }
+    catch (e) { setError(e.message || 'Gagal mengganti kata sandi.'); setBusy(false); }
+  };
+
+  return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <PageTop title="Ganti Kata Sandi" right={<Btn title="Batal" onPress={onCancel} />} />
+        <Card>
+          <Field label="Kata sandi lama" value={lama} onChangeText={setLama} secureTextEntry={!show} autoCapitalize="none" maxLength={100} />
+          <Field label="Kata sandi baru" value={baru} onChangeText={setBaru} secureTextEntry={!show} autoCapitalize="none" maxLength={100} placeholder="Minimal 6 karakter" />
+          <Field label="Ulangi kata sandi baru" value={ulang} onChangeText={setUlang} secureTextEntry={!show} autoCapitalize="none" maxLength={100} onSubmitEditing={save} />
+          <Pressable onPress={() => setShow(!show)} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <FontAwesome6 name={show ? 'eye-slash' : 'eye'} size={12} color={c.link} />
+            <Txt small style={{ color: c.link }}>{show ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}</Txt>
+          </Pressable>
+          {!!error && <Txt small style={{ color: '#e87979', marginTop: 10 }}>{error}</Txt>}
+          <Btn primary title={busy ? 'Menyimpan…' : 'Simpan Kata Sandi'} onPress={save} disabled={busy} style={{ marginTop: 12 }} />
         </Card>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -705,6 +746,8 @@ export default function App() {
   const [page, setPage] = useState('home');
   const [creating, setCreating] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [changingPw, setChangingPw] = useState(false);
+  const [notice, setNotice] = useState('');
   const [filter, setFilter] = useState('Semua');
   const [notifOnly, setNotifOnly] = useState(null);
 
@@ -745,8 +788,8 @@ export default function App() {
   };
   const themeIcon = { auto: 'circle-half-stroke', light: 'sun', dark: 'moon' }[pref];
 
-  const go = (p) => { setCreating(null); setEditing(false); setNotifOnly(null); setPage(p); refresh(); };
-  const startCreate = (category) => { setPage('reports'); setEditing(false); setCreating({ category }); };
+  const go = (p) => { setCreating(null); setEditing(false); setChangingPw(false); setNotifOnly(null); setPage(p); refresh(); };
+  const startCreate = (category) => { setPage('reports'); setEditing(false); setChangingPw(false); setCreating({ category }); };
 
   const submitReport = async ({ id_kategori, topik, deskripsi, lokasi_kejadian, media }) => {
     const fd = new FormData();
@@ -777,6 +820,13 @@ export default function App() {
     setEditing(false);
   };
 
+  const savePassword = async (body) => {
+    await authFetch('/api/me/password', { method: 'POST', body });
+    setChangingPw(false);
+    setNotice('Kata sandi berhasil diganti.');
+    setTimeout(() => setNotice(''), 4000);
+  };
+
   const sendVote = (s) => {
     authFetch('/api/survei', { method: 'POST', body: { skor: s.skor, label_kepuasan: s.label, emoji: s.emoji } }).catch(() => {});
   };
@@ -803,12 +853,14 @@ export default function App() {
       onCancel={() => setCreating(null)} onSubmit={submitReport} />;
   } else if (page === 'profile' && editing) {
     body = <EditProfilePage profile={data.profile} onCancel={() => setEditing(false)} onSave={saveProfile} />;
+  } else if (page === 'profile' && changingPw) {
+    body = <ChangePasswordPage onCancel={() => setChangingPw(false)} onSave={savePassword} />;
   } else if (page === 'home') body = <HomePage data={data} go={go} onCreate={startCreate} onVote={sendVote} />;
   else if (page === 'reports') body = <ReportsPage data={data} filter={filter} setFilter={setFilter} onCreate={startCreate}
     onNotif={(id) => { setNotifOnly(id); setPage('notifications'); }} />;
   else if (page === 'notifications') body = <NotificationsPage data={data} only={notifOnly} go={go}
     onAll={() => setNotifOnly(null)} onReadAll={readAll} />;
-  else body = <ProfilePage data={data} onEdit={() => setEditing(true)} onLogout={logout} />;
+  else body = <ProfilePage data={data} onEdit={() => setEditing(true)} onChangePw={() => setChangingPw(true)} onLogout={logout} />;
 
   return (
     <ThemeCtx.Provider value={theme}>
@@ -819,6 +871,11 @@ export default function App() {
           <Pressable onPress={refresh} style={{ backgroundColor: '#fee2e2', paddingVertical: 8, paddingHorizontal: 16 }}>
             <Text style={{ color: '#991b1b', fontSize: 11 }}>{loadErr} Ketuk untuk coba lagi.</Text>
           </Pressable>
+        )}
+        {!!notice && (
+          <View style={{ backgroundColor: '#d1fae5', paddingVertical: 8, paddingHorizontal: 16 }}>
+            <Text style={{ color: '#065f46', fontSize: 11, fontWeight: '600' }}>{notice}</Text>
+          </View>
         )}
         <View style={{ flex: 1 }}>{body}</View>
         <TabBar page={page} go={go} />

@@ -135,6 +135,19 @@ app.patch('/api/me', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Ganti kata sandi sendiri. Body: { password_lama, password_baru }
+// Salah sandi lama sengaja 400 (bukan 401) supaya app tidak mengira sesi habis lalu logout.
+app.post('/api/me/password', auth, (req, res) => {
+  const { password_lama, password_baru } = req.body;
+  if (!password_lama || !password_baru) return res.status(400).json({ error: 'Kata sandi lama dan baru wajib diisi.' });
+  if (String(password_baru).length < 6) return res.status(400).json({ error: 'Kata sandi baru minimal 6 karakter.' });
+  const p = db.prepare('SELECT password_hash FROM pelapor WHERE id_pelapor = ?').get(req.user.id);
+  if (!p || !cekPw(String(password_lama), p.password_hash)) return res.status(400).json({ error: 'Kata sandi lama salah.' });
+  if (String(password_lama) === String(password_baru)) return res.status(400).json({ error: 'Kata sandi baru harus berbeda dari yang lama.' });
+  db.prepare('UPDATE pelapor SET password_hash = ? WHERE id_pelapor = ?').run(hashPw(String(password_baru)), req.user.id);
+  res.json({ ok: true });
+});
+
 // Daftar aduan milik sendiri: /api/aduan?status=Diproses
 app.get('/api/aduan', auth, (req, res) => {
   let sql = ADUAN_SQL + ' WHERE a.is_arsip = 0 AND a.id_pelapor = ?';
