@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Aduan Warga</title>
+<style>
+  :root {
+    --bg:#f1f5f9; --card:#fff; --ink:#0f172a; --mut:#64748b; --edge:#e2e8f0; --brand:#2563eb; --brand-ink:#fff;
+    --ok-bg:#d1fae5; --ok:#065f46; --warn-bg:#fef3c7; --warn:#92400e; --proc-bg:#e0e7ff; --proc:#3730a3; --danger:#dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b1220; --card:#162033; --ink:#e2e8f0; --mut:#94a3b8; --edge:#2a3a55; --brand:#3b82f6;
+      --ok-bg:#064e3b; --ok:#a7f3d0; --warn-bg:#78350f; --warn:#fde68a; --proc-bg:#312e81; --proc:#c7d2fe; --danger:#f87171; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px; background:var(--card); border-bottom:1px solid var(--edge); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:1200px; margin:0 auto; padding:20px; }
+  button, select, input, textarea { font:inherit; color:inherit; }
+  button { cursor:pointer; border:1px solid var(--edge); background:var(--card); padding:7px 12px; border-radius:8px; }
+  button:hover { border-color:var(--brand); }
+  button.primary { background:var(--brand); color:var(--brand-ink); border-color:var(--brand); font-weight:600; }
+  button.danger { color:var(--danger); border-color:var(--danger); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  input, select, textarea { border:1px solid var(--edge); background:var(--bg); border-radius:8px; padding:7px 10px; }
+  textarea { width:100%; min-height:70px; resize:vertical; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:14px; padding:16px; }
+  .grid { display:grid; gap:12px; }
+  .stats { grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:16px; }
+  .stat .n { font-size:28px; font-weight:800; line-height:1.1; }
+  .stat .l { color:var(--mut); font-size:12px; }
+  .bars { margin-top:12px; display:grid; gap:6px; }
+  .bar { display:grid; grid-template-columns:130px 1fr 32px; gap:8px; align-items:center; font-size:12px; }
+  .bar .track { height:8px; background:var(--edge); border-radius:6px; overflow:hidden; }
+  .bar .fill { height:100%; background:var(--brand); }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:16px 0 12px; }
+  .toolbar input[type=search] { flex:1; min-width:180px; }
+  .toolbar label { display:flex; gap:6px; align-items:center; color:var(--mut); }
+  .tablewrap { overflow-x:auto; padding:0; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--edge); vertical-align:middle; }
+  th { font-size:12px; color:var(--mut); font-weight:600; white-space:nowrap; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover { background:color-mix(in srgb, var(--brand) 7%, transparent); }
+  tr.arsip td { opacity:.55; }
+  .mut { color:var(--mut); font-size:12px; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:6px; font-size:11px; font-weight:700; white-space:nowrap; }
+  .b-Verifikasi { background:var(--warn-bg); color:var(--warn); }
+  .b-Diproses { background:var(--proc-bg); color:var(--proc); }
+  .b-Selesai { background:var(--ok-bg); color:var(--ok); }
+  .prog { width:90px; height:6px; background:var(--edge); border-radius:6px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:6px; }
+  .prog > i { display:block; height:100%; background:var(--brand); }
+  .empty { text-align:center; padding:36px; color:var(--mut); }
+  dialog { border:1px solid var(--edge); border-radius:16px; padding:0; width:min(760px, 94vw); max-height:92vh; background:var(--card); color:var(--ink); }
+  dialog::backdrop { background:#020617aa; }
+  .dhead { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 20px; border-bottom:1px solid var(--edge); position:sticky; top:0; background:var(--card); }
+  .dbody { padding:16px 20px 20px; display:grid; gap:18px; overflow:auto; max-height:calc(92vh - 70px); }
+  .dbody h3 { margin:0 0 8px; font-size:13px; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; }
+  .kv { display:grid; grid-template-columns:110px 1fr; gap:4px 10px; }
+  .kv dt { color:var(--mut); } .kv dd { margin:0; word-break:break-word; }
+  .media { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
+  .media figure { margin:0; border:1px solid var(--edge); border-radius:10px; overflow:hidden; background:var(--bg); }
+  .media img, .media video { width:100%; height:150px; object-fit:cover; display:block; background:#020617; }
+  .media figcaption { padding:6px 8px; font-size:11px; color:var(--mut); }
+  .timeline { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .timeline li { border-left:3px solid var(--brand); padding:2px 0 2px 12px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .field { display:grid; gap:4px; }
+  .field > span { font-size:12px; color:var(--mut); }
+  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#0f172a; color:#fff; padding:10px 16px; border-radius:10px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s; z-index:50; }
+  #toast.show { opacity:1; } #toast.err { background:#b91c1c; }
+  #login { max-width:340px; margin:14vh auto; }
+  #login h1 { margin:0 0 4px; } #login p { color:var(--mut); margin:0 0 16px; }
+  #login input { width:100%; margin-bottom:10px; }
+  .err { color:var(--danger); font-size:13px; min-height:18px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+
+<section id="login" class="card" hidden>
+  <h1>Admin Aduan Warga</h1>
+  <p>Masukkan kunci admin (<code>ADMIN_KEY</code>) server.</p>
+  <form id="loginForm">
+    <input id="keyInput" type="password" placeholder="Kunci admin" autocomplete="current-password" autofocus>
+    <button class="primary" style="width:100%">Masuk</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <header>
+    <h1>Admin Aduan Warga</h1>
+    <div class="row">
+      <span class="mut" id="updated"></span>
+      <button id="refreshBtn">Muat ulang</button>
+      <button id="logoutBtn">Keluar</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="grid stats" id="stats"></section>
+    <section class="card" id="kategoriBars" hidden></section>
+
+    <div class="toolbar">
+      <select id="fStatus">
+        <option value="">Semua status</option>
+        <option>Verifikasi</option><option>Diproses</option><option>Selesai</option>
+      </select>
+      <select id="fKategori"><option value="">Semua kategori</option></select>
+      <input id="fQ" type="search" placeholder="Cari judul, uraian, atau nama pelapor…">
+      <label><input id="fArsip" type="checkbox"> Tampilkan arsip</label>
+    </div>
+
+    <div class="card tablewrap">
+      <table>
+        <thead><tr><th>ID</th><th>Judul</th><th>Pelapor</th><th>Kategori</th><th>Status</th><th>Progres</th><th>Tanggal</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="empty" hidden>Tidak ada aduan.</div>
+    </div>
+  </main>
+</div>
+
+<dialog id="dlg"></dialog>
+<div id="toast"></div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const when = (s) => s ? new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '-';
+
+let KEY = sessionStorage.getItem('adminKey') || '';
+let currentId = null;
+
+async function api(path, opt = {}) {
+  const headers = { 'x-admin-key': KEY, ...(opt.headers || {}) };
+  let body = opt.body;
+  if (body && !(body instanceof FormData)) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
+  const res = await fetch('/api/admin' + path, { ...opt, headers, body });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(data.error || 'Terjadi kesalahan'); e.status = res.status; throw e; }
+  return data;
+}
+
+let toastTimer;
+function toast(msg, isErr) {
+  const t = $('#toast');
+  t.textContent = msg; t.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), 3200);
+}
+
+function showLogin(msg) {
+  $('#app').hidden = true; $('#login').hidden = false;
+  $('#loginErr').textContent = msg || '';
+  if ($('#dlg').open) $('#dlg').close();
+}
+function fail(e) {
+  if (e.status === 401 || e.status === 429) { sessionStorage.removeItem('adminKey'); KEY = ''; showLogin(e.message); }
+  else toast(e.message, true);
+}
+
+/* ───── Login ───── */
+$('#loginForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  KEY = $('#keyInput').value;
+  try {
+    await api('/statistik');
+    sessionStorage.setItem('adminKey', KEY);
+    $('#keyInput').value = '';
+    startApp();
+  } catch (e) { KEY = ''; $('#loginErr').textContent = e.message; }
+});
+$('#logoutBtn').addEventListener('click', () => { sessionStorage.removeItem('adminKey'); KEY = ''; showLogin(''); });
+
+/* ───── Statistik ───── */
+async function loadStats() {
+  const s = await api('/statistik');
+  const by = Object.fromEntries(s.per_status.map((x) => [x.status, x.jumlah]));
+  const total = s.per_status.reduce((a, x) => a + x.jumlah, 0);
+  const box = (n, l) => `<div class="card stat"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`;
+  $('#stats').innerHTML =
+    box(total, 'Total aduan aktif') + box(by.Verifikasi || 0, 'Verifikasi') + box(by.Diproses || 0, 'Diproses') +
+    box(by.Selesai || 0, 'Selesai') + box(s.total_pelapor, 'Warga terdaftar') +
+    box(s.survei.jumlah ? `${s.survei.rata_rata} / 5` : '-', `Kepuasan (${s.survei.jumlah} suara)`);
+  const max = Math.max(1, ...s.per_kategori.map((k) => k.jumlah));
+  const kb = $('#kategoriBars');
+  kb.hidden = !s.per_kategori.length;
+  kb.innerHTML = '<strong>Aduan per kategori</strong><div class="bars">' + s.per_kategori.map((k) =>
+    `<div class="bar"><span>${esc(k.label_kategori)}</span><div class="track"><div class="fill" style="width:${(k.jumlah / max) * 100}%"></div></div><b>${k.jumlah}</b></div>`).join('') + '</div>';
+}
+
+/* ───── Daftar aduan ───── */
+async function loadList() {
+  const q = new URLSearchParams();
+  if ($('#fStatus').value) q.set('status', $('#fStatus').value);
+  if ($('#fKategori').value) q.set('id_kategori', $('#fKategori').value);
+  if ($('#fQ').value.trim()) q.set('q', $('#fQ').value.trim());
+  if ($('#fArsip').checked) q.set('arsip', '1');
+  const list = await api('/aduan?' + q);
+  $('#rows').innerHTML = list.map((a) => `
+    <tr data-id="${esc(a.id_aduan)}" class="${a.is_arsip ? 'arsip' : ''}">
+      <td class="mut">${esc(a.id_aduan)}</td>
+      <td><strong>${esc(a.topik)}</strong></td>
+      <td>${esc(a.nama_pelapor)}</td>
+      <td>${esc(a.label_kategori)}</td>
+      <td><span class="badge b-${esc(a.status)}">${esc(a.status)}</span></td>
+      <td><span class="prog"><i style="width:${Number(a.progres) || 0}%"></i></span>${Number(a.progres) || 0}%</td>
+      <td class="mut">${esc(when(a.tanggal_aduan))}</td>
+    </tr>`).join('');
+  $('#empty').hidden = list.length > 0;
+}
+
+async function loadAll() {
+  try {
+    await Promise.all([loadStats(), loadList()]);
+    $('#updated').textContent = 'Diperbarui ' + new Date().toLocaleTimeString('id-ID');
+  } catch (e) { fail(e); }
+}
+
+$('#rows').addEventListener('click', (ev) => {
+  const tr = ev.target.closest('tr[data-id]');
+  if (tr) openDetail(tr.dataset.id);
+});
+['fStatus', 'fKategori', 'fArsip'].forEach((id) => $('#' + id).addEventListener('change', () => loadList().catch(fail)));
+let qTimer;
+$('#fQ').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadList().catch(fail), 300); });
+$('#refreshBtn').addEventListener('click', loadAll);
+
+/* ───── Detail ───── */
+async function openDetail(id) {
+  currentId = id;
+  try {
+    const a = await api('/aduan/' + encodeURIComponent(id));
+    renderDetail(a);
+    if (!$('#dlg').open) $('#dlg').showModal();
+  } catch (e) { fail(e); }
+}
+
+function renderDetail(a) {
+  const media = a.media.length ? '<div class="media">' + a.media.map((m) => {
+    const label = { foto_sebelum: 'Foto sebelum', foto_sesudah: 'Foto sesudah', video: 'Video' }[m.tipe_media] || m.tipe_media;
+    const el = m.tipe_media === 'video'
+      ? `<video src="${esc(m.url_file)}" controls preload="metadata"></video>`
+      : `<a href="${esc(m.url_file)}" target="_blank" rel="noopener"><img src="${esc(m.url_file)}" alt="${esc(label)}" loading="lazy"></a>`;
+    return `<figure>${el}<figcaption>${esc(label)}${m.keterangan_media ? ' · ' + esc(m.keterangan_media) : ''}</figcaption></figure>`;
+  }).join('') + '</div>' : '<span class="mut">Belum ada foto atau video.</span>';
+
+  const timeline = a.progres_list.length ? '<ul class="timeline">' + a.progres_list.map((p) =>
+    `<li><strong>${esc(p.status_tahapan)}</strong> · ${Number(p.persentase_progres) || 0}%
+       <div>${esc(p.catatan_petugas || '')}</div><div class="mut">${esc(when(p.updated_at))}</div></li>`).join('') + '</ul>'
+    : '<span class="mut">Belum ada riwayat.</span>';
+
+  $('#dlg').innerHTML = `
+    <div class="dhead">
+      <div>
+        <div class="mut">${esc(a.id_aduan)}${a.is_arsip ? ' · <b>DIARSIPKAN</b>' : ''}</div>
+        <strong style="font-size:17px">${esc(a.topik)}</strong>
+      </div>
+      <button id="closeBtn">Tutup</button>
+    </div>
+    <div class="dbody">
+      <section>
+        <dl class="kv">
+          <dt>Status</dt><dd><span class="badge b-${esc(a.status)}">${esc(a.status)}</span> · ${Number(a.progres) || 0}%</dd>
+          <dt>Pelapor</dt><dd>${esc(a.nama_pelapor)} <span class="mut">(NIK ${esc(a.nik)})</span></dd>
+          <dt>Kategori</dt><dd>${esc(a.label_kategori)} · ${esc(a.dinas)}</dd>
+          <dt>Lokasi</dt><dd>${esc(a.lokasi_kejadian || '-')}</dd>
+          <dt>Tanggal</dt><dd>${esc(when(a.tanggal_aduan))}</dd>
+          <dt>Uraian</dt><dd>${esc(a.deskripsi || '-')}</dd>
+        </dl>
+      </section>
+
+      <section><h3>Foto & video</h3>${media}</section>
+
+      <section>
+        <h3>Ubah status</h3>
+        <div class="grid" style="gap:10px">
+          <div class="row">
+            <label class="field"><span>Status</span>
+              <select id="eStatus">${['Verifikasi', 'Diproses', 'Selesai'].map((s) => `<option ${s === a.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
+            <label class="field"><span>Progres (%)</span>
+              <input id="eProg" type="number" min="0" max="100" step="1" value="${Number(a.progres) || 0}" style="width:100px"></label>
+          </div>
+          <label class="field"><span>Catatan petugas (muncul di notifikasi warga)</span><textarea id="eNote" maxlength="500"></textarea></label>
+          <div><button class="primary" id="saveBtn">Simpan perubahan</button></div>
+        </div>
+      </section>
+
+      <section>
+        <h3>Upload foto / video penanganan</h3>
+        <div class="row">
+          <select id="mType"><option value="foto_sesudah">Foto sesudah</option><option value="foto_sebelum">Foto sebelum</option><option value="video">Video</option></select>
+          <input id="mFile" type="file" accept="image/*,video/*">
+          <button id="uploadBtn">Upload</button>
+        </div>
+      </section>
+
+      <section><h3>Riwayat progres</h3>${timeline}</section>
+
+      <section class="row" style="justify-content:space-between">
+        <button id="arsipBtn">${a.is_arsip ? 'Keluarkan dari arsip' : 'Arsipkan'}</button>
+        <button class="danger" id="delBtn">Hapus permanen</button>
+      </section>
+    </div>`;
+
+  const syncProg = () => {
+    const done = $('#eStatus').value === 'Selesai';
+    if (done) $('#eProg').value = 100;
+    $('#eProg').disabled = done;
+  };
+  $('#eStatus').addEventListener('change', syncProg); syncProg();
+
+  $('#closeBtn').onclick = () => $('#dlg').close();
+
+  $('#saveBtn').onclick = async () => {
+    const btn = $('#saveBtn'); btn.disabled = true;
+    try {
+      await api(`/aduan/${encodeURIComponent(a.id_aduan)}/status`, { method: 'PATCH', body: {
+        status: $('#eStatus').value, persentase_progres: Number($('#eProg').value), catatan_petugas: $('#eNote').value.trim() } });
+      toast('Status diperbarui. Warga akan menerima notifikasi.');
+      await openDetail(a.id_aduan); loadAll();
+    } catch (e) { fail(e); btn.disabled = false; }
+  };
+
+  $('#uploadBtn').onclick = async () => {
+    const f = $('#mFile').files[0];
+    if (!f) return toast('Pilih file dulu.', true);
+    const fd = new FormData();
+    fd.append('tipe_media', $('#mType').value);
+    fd.append('file', f);
+    const btn = $('#uploadBtn'); btn.disabled = true; btn.textContent = 'Mengunggah…';
+    try {
+      await api(`/aduan/${encodeURIComponent(a.id_aduan)}/media`, { method: 'POST', body: fd });
+      toast('File berhasil diunggah.');
+      await openDetail(a.id_aduan);
+    } catch (e) { fail(e); btn.disabled = false; btn.textContent = 'Upload'; }
+  };
+
+  $('#arsipBtn').onclick = async () => {
+    try {
+      await api(`/aduan/${encodeURIComponent(a.id_aduan)}/arsip`, { method: 'PATCH', body: { is_arsip: a.is_arsip ? 0 : 1 } });
+      toast(a.is_arsip ? 'Dikeluarkan dari arsip.' : 'Aduan diarsipkan.');
+      $('#dlg').close(); loadAll();
+    } catch (e) { fail(e); }
+  };
+
+  $('#delBtn').onclick = async () => {
+    if (!confirm(`Hapus permanen aduan ${a.id_aduan}?\nRiwayat progres dan media ikut terhapus. Tindakan ini tidak bisa dibatalkan.`)) return;
+    try {
+      await api(`/aduan/${encodeURIComponent(a.id_aduan)}`, { method: 'DELETE' });
+      toast('Aduan dihapus.'); $('#dlg').close(); loadAll();
+    } catch (e) { fail(e); }
+  };
+}
+
+/* ───── Mulai ───── */
+async function startApp() {
+  $('#login').hidden = true; $('#app').hidden = false;
+  try {
+    const kat = await (await fetch('/api/kategori')).json();
+    $('#fKategori').innerHTML = '<option value="">Semua kategori</option>' +
+      kat.map((k) => `<option value="${esc(k.id_kategori)}">${esc(k.label_kategori)}</option>`).join('');
+  } catch {}
+  await loadAll();
+}
+setInterval(() => { if (KEY && !$('#app').hidden && !$('#dlg').open && !document.hidden) loadAll(); }, 30000);
+
+if (KEY) api('/statistik').then(startApp).catch((e) => { KEY = ''; showLogin(e.status === 401 ? '' : e.message); });
+else showLogin('');
+</script>
+</body>
+</html>

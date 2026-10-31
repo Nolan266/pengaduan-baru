@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext } from 'react';
 import {
-  View, Text, ScrollView, FlatList, Pressable, TextInput, Image, Modal,
+  View, Text, ScrollView, FlatList, Pressable, TextInput, Image, Modal, RefreshControl, AppState,
   StyleSheet, useColorScheme, useWindowDimensions, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -82,19 +82,23 @@ const stamp = (v) => {
 // SQLite menyimpan waktu UTC "YYYY-MM-DD HH:MM:SS"
 const toIso = (s) => new Date(String(s).replace(' ', 'T') + 'Z').toISOString();
 const STATUS_UI = { Verifikasi: 'Dibuat', Diproses: 'Diproses', Selesai: 'Selesai' };
-const EVENT_ICON = { Dibuat: 'file-circle-plus', Diproses: 'gears', Selesai: 'circle-check' };
-const EVENT_BODY = { Dibuat: 'Aduan berhasil dibuat dan menunggu verifikasi.', Diproses: 'Aduan sedang ditangani.', Selesai: 'Penanganan selesai. Terima kasih atas partisipasi Anda.' };
+const EVENT_ICON = { Dibuat: 'file-circle-plus', Diproses: 'gears', Selesai: 'circle-check', Dibatalkan: 'circle-xmark' };
+const EVENT_BODY = { Dibuat: 'Aduan berhasil dibuat dan menunggu verifikasi.', Diproses: 'Aduan sedang ditangani.', Selesai: 'Penanganan selesai. Terima kasih atas partisipasi Anda.', Dibatalkan: 'Aduan dibatalkan oleh pelapor.' };
 
-const fromPelapor = (p) => ({ name: p.nama, username: p.username, address: p.alamat || '', nik: p.nik });
+const fromPelapor = (p) => ({ name: p.nama, username: p.username, address: p.alamat || '', nik: p.nik, foto: p.foto_url ? API_URL + p.foto_url : null });
 const maskNik = (n) => { const s = String(n || ''); return s.length > 4 ? '•••• •••• •••• ' + s.slice(-4) : s; };
 
 const mapReport = (r) => {
-  const m = (r.media || [])[0];
+  const ms = r.media || [];
+  const before = ms.find((m) => m.tipe_media !== 'foto_sesudah');
+  const after = ms.find((m) => m.tipe_media === 'foto_sesudah');
+  const toMedia = (m) => ({ uri: API_URL + m.url_file, kind: m.tipe_media === 'video' ? 'video' : 'photo' });
   return {
     id: r.id_aduan, title: r.topik, category: r.label_kategori, description: r.deskripsi || '-',
     location: r.lokasi_kejadian || '-', createdAt: toIso(r.tanggal_aduan),
     status: STATUS_UI[r.status] || r.status, progress: r.progres || 0, agency: r.dinas,
-    ...(m ? { media: { uri: API_URL + m.url_file, kind: m.tipe_media === 'video' ? 'video' : 'photo' } } : {}),
+    ...(before ? { before: toMedia(before) } : {}),
+    ...(after ? { after: toMedia(after) } : {}),
   };
 };
 const mapEvent = (p) => {
@@ -114,6 +118,13 @@ const DARK = { surface: '#1e293b', screen: '#0f172a', ink: '#e2e8f0', secondary:
 const ThemeCtx = createContext({ c: LIGHT, dark: false });
 const useTheme = () => useContext(ThemeCtx);
 
+// Tarik layar ke bawah untuk memuat ulang (di web tidak aktif; refresh otomatis tetap jalan)
+const RefreshCtx = createContext({ refreshing: false, onRefresh: () => {} });
+const useRC = () => {
+  const { refreshing, onRefresh } = useContext(RefreshCtx);
+  return <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />;
+};
+
 /* ───────────── Komponen kecil ───────────── */
 
 function Txt({ style, small, bold, secondary, children, ...rest }) {
@@ -129,17 +140,18 @@ function Card({ style, children }) {
   return <View style={[{ backgroundColor: c.surface, borderColor: c.edge, borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 10 }, style]}>{children}</View>;
 }
 
-function Btn({ title, onPress, primary, icon, disabled, active, style }) {
+function Btn({ title, onPress, primary, icon, disabled, active, danger, style }) {
   const { c } = useTheme();
   const hi = primary || active;
+  const fg = hi ? '#fff' : danger ? '#dc2626' : c.ink;
   return (
     <Pressable onPress={onPress} disabled={disabled}
       style={({ pressed }) => [{ paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1,
-        backgroundColor: hi ? '#2563eb' : c.surface, borderColor: hi ? '#2563eb' : c.edge,
+        backgroundColor: hi ? '#2563eb' : c.surface, borderColor: hi ? '#2563eb' : danger ? '#dc2626' : c.edge,
         flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
         opacity: disabled ? 0.5 : pressed ? 0.8 : 1 }, style]}>
-      {icon ? <FontAwesome6 name={icon} size={12} color={hi ? '#fff' : c.ink} /> : null}
-      <Text style={{ color: hi ? '#fff' : c.ink, fontSize: 12, fontWeight: '700' }}>{title}</Text>
+      {icon ? <FontAwesome6 name={icon} size={12} color={fg} /> : null}
+      <Text style={{ color: fg, fontSize: 12, fontWeight: '700' }}>{title}</Text>
     </Pressable>
   );
 }
@@ -163,11 +175,11 @@ function Progress({ value }) {
   );
 }
 
-function Avatar({ size }) {
+function Avatar({ size, uri }) {
   const { c } = useTheme();
   return (
     <View style={{ width: size, height: size }}>
-      <Image source={AVATAR} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.screen }} />
+      <Image source={uri ? { uri } : AVATAR} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.screen }} />
       <View style={{ position: 'absolute', right: 0, bottom: 1, width: 10, height: 10, borderRadius: 5,
         backgroundColor: '#10b981', borderWidth: 2, borderColor: c.surface }} />
     </View>
@@ -216,14 +228,16 @@ function CctvVideo({ cam, height }) {
   );
 }
 
-function SavedMedia({ media, caption }) {
+function SavedMedia({ media, caption, onOpen }) {
   const { c } = useTheme();
   const player = useVideoPlayer(media.kind === 'video' ? media.uri : null, () => {});
   return (
     <View style={{ marginVertical: 10, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: c.edge }}>
       {media.kind === 'video'
         ? <VideoView player={player} style={{ width: '100%', height: 190, backgroundColor: '#020617' }} nativeControls contentFit="contain" />
-        : <Image source={{ uri: media.uri }} style={{ width: '100%', height: 190, backgroundColor: '#020617' }} resizeMode="contain" />}
+        : <Pressable disabled={!onOpen} onPress={() => onOpen && onOpen(media.uri)}>
+            <Image source={{ uri: media.uri }} style={{ width: '100%', height: 190, backgroundColor: '#020617' }} resizeMode="contain" />
+          </Pressable>}
       <Txt small secondary style={{ padding: 8, backgroundColor: c.screen }}>{caption}</Txt>
     </View>
   );
@@ -331,13 +345,14 @@ function CctvCard() {
 
 function HomePage({ data, go, onCreate, onVote }) {
   const { c } = useTheme();
+  const rc = useRC();
   const [vote, setVote] = useState(null);
   const r = data.reports[0];
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} refreshControl={rc}>
       <Card style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, borderRadius: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-          <Avatar size={40} />
+          <Avatar size={40} uri={data.profile.foto} />
           <View style={{ flex: 1 }}>
             <Txt secondary style={{ fontSize: 10 }}>Warga Terverifikasi</Txt>
             <Txt bold style={{ fontSize: 14, color: c.title }}>{data.profile.name}</Txt>
@@ -394,7 +409,54 @@ function HomePage({ data, go, onCreate, onVote }) {
 
 /* ───────────── Aduan ───────────── */
 
-function ReportCard({ r, onNotif }) {
+function PhotoViewer({ uri, onClose }) {
+  return (
+    <Modal visible={!!uri} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: '#000000ee', justifyContent: 'center', padding: 12 }}>
+        {uri ? <Image source={{ uri }} style={{ width: '100%', height: '80%' }} resizeMode="contain" /> : null}
+        <Text style={{ color: '#fff', textAlign: 'center', marginTop: 12, fontSize: 12 }}>Ketuk di mana saja untuk menutup</Text>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function BeforeAfter({ before, after }) {
+  const { c } = useTheme();
+  const [big, setBig] = useState(null);
+  if (!before && !after) return null;
+  const viewer = <PhotoViewer uri={big} onClose={() => setBig(null)} />;
+  if (before && after && before.kind === 'photo' && after.kind === 'photo') {
+    return (
+      <View style={{ marginVertical: 10 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {[['Sebelum', before], ['Sesudah', after]].map(([label, m]) => {
+            const done = label === 'Sesudah';
+            return (
+              <View key={label} style={{ flex: 1, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: c.edge }}>
+                <Pressable onPress={() => setBig(m.uri)}>
+                  <Image source={{ uri: m.uri }} style={{ width: '100%', height: 130, backgroundColor: '#020617' }} resizeMode="cover" />
+                </Pressable>
+                <View style={{ padding: 6, backgroundColor: done ? '#d1fae5' : c.screen }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', textAlign: 'center', color: done ? '#065f46' : c.secondary }}>{label}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+        {viewer}
+      </View>
+    );
+  }
+  return (
+    <>
+      {before ? <SavedMedia media={before} caption={after ? 'Sebelum penanganan' : 'Lampiran aduan'} onOpen={setBig} /> : null}
+      {after ? <SavedMedia media={after} caption="Sesudah penanganan" onOpen={setBig} /> : null}
+      {viewer}
+    </>
+  );
+}
+
+function ReportCard({ r, onNotif, onDetail }) {
   return (
     <Card>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
@@ -406,32 +468,264 @@ function ReportCard({ r, onNotif }) {
       <Txt small secondary style={{ marginTop: 5 }}>
         <FontAwesome6 name="location-dot" size={10} color="#64748b" /> {r.location}
       </Txt>
-      {r.media ? <SavedMedia media={r.media} caption="Lampiran aduan" /> : null}
+      <BeforeAfter before={r.before} after={r.after} />
       <Progress value={r.progress} />
       <Txt small secondary style={{ marginBottom: 8 }}>Progress {r.progress}% · {r.agency}</Txt>
-      <Btn title="Lihat notifikasi" onPress={() => onNotif(r.id)} />
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Btn primary icon="eye" title="Lihat detail" onPress={() => onDetail(r.id)} style={{ flex: 1 }} />
+        <Btn icon="bell" title="Notifikasi" onPress={() => onNotif(r.id)} style={{ flex: 1 }} />
+      </View>
     </Card>
   );
 }
 
-function ReportsPage({ data, filter, setFilter, onCreate, onNotif }) {
-  const list = data.reports.filter((r) => filter === 'Semua' || r.status === filter);
+function Dropdown({ label, value, options, onChange }) {
+  const { c } = useTheme();
+  const [open, setOpen] = useState(false);
+  const cur = options.find((o) => o.value === value) || options[0];
+  const active = value !== options[0].value;
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+    <View style={{ flex: 1 }}>
+      <Txt small secondary style={{ marginBottom: 4 }}>{label}</Txt>
+      <Pressable onPress={() => setOpen(true)}
+        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          borderWidth: 1, borderColor: active ? '#2563eb' : c.edge, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12,
+          backgroundColor: c.surface, opacity: pressed ? 0.8 : 1 })}>
+        <Text numberOfLines={1} style={{ flex: 1, color: active ? c.link : c.ink, fontSize: 13, fontWeight: '600' }}>{cur.label}</Text>
+        <FontAwesome6 name="chevron-down" size={11} color={c.secondary} />
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: '#020617aa', justifyContent: 'flex-end' }}>
+          <Pressable onPress={() => {}} style={{ backgroundColor: c.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+            padding: 16, paddingBottom: 28, maxHeight: '70%', width: '100%', maxWidth: 520, alignSelf: 'center',
+            borderWidth: 1, borderColor: c.edge }}>
+            <Txt bold style={{ fontSize: 15, marginBottom: 8 }}>{label}</Txt>
+            <ScrollView>
+              {options.map((o) => {
+                const on = o.value === value;
+                return (
+                  <Pressable key={o.value} onPress={() => { onChange(o.value); setOpen(false); }}
+                    style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                      paddingVertical: 13, paddingHorizontal: 10, borderRadius: 10,
+                      backgroundColor: on ? c.indigoBg : pressed ? c.screen : 'transparent' })}>
+                    <Text style={{ color: on ? c.indigoText : c.ink, fontSize: 14, fontWeight: on ? '700' : '500' }}>{o.label}</Text>
+                    {on ? <FontAwesome6 name="check" size={13} color={c.indigoText} /> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+}
+
+function ReportsPage({ data, filter, setFilter, search, setSearch, catFilter, setCatFilter, onCreate, onNotif, onDetail }) {
+  const { c } = useTheme();
+  const rc = useRC();
+  const q = search.trim().toLowerCase();
+  const list = data.reports.filter((r) =>
+    (filter === 'Semua' || r.status === filter) &&
+    (catFilter === 'Semua' || r.category === catFilter) &&
+    (!q || [r.title, r.description, r.location, r.id].some((t) => String(t || '').toLowerCase().includes(q))));
+  const filtering = filter !== 'Semua' || catFilter !== 'Semua' || !!q;
+  const reset = () => { setFilter('Semua'); setCatFilter('Semua'); setSearch(''); };
+  const total = data.reports.length;
+  const catOptions = [{ value: 'Semua', label: `Semua kategori (${total})` },
+    ...CATEGORIES.map((k) => ({ value: k, label: `${k} (${data.reports.filter((r) => r.category === k).length})` }))];
+  const statusOptions = [{ value: 'Semua', label: `Semua status (${total})` },
+    ...['Dibuat', 'Diproses', 'Selesai'].map((k) => ({ value: k, label: `${k} (${data.reports.filter((r) => r.status === k).length})` }))];
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} refreshControl={rc} keyboardShouldPersistTaps="handled">
       <PageTop title="Aduan Saya" right={<Btn primary title="+ Tambah" onPress={() => onCreate()} />} />
       <Txt small secondary style={{ marginBottom: 12 }}>Aduan milik akun Anda</Txt>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-        {['Semua', 'Dibuat', 'Diproses', 'Selesai'].map((f) => <Btn key={f} title={f} active={filter === f} onPress={() => setFilter(f)} />)}
+
+      <View style={{ marginBottom: 10 }}>
+        <TextInput value={search} onChangeText={setSearch} placeholder="Cari judul, uraian, lokasi, atau nomor…"
+          placeholderTextColor={c.secondary} returnKeyType="search" autoCorrect={false}
+          style={{ borderWidth: 1, borderColor: c.edge, borderRadius: 10, paddingVertical: 10, paddingLeft: 36, paddingRight: 36,
+            backgroundColor: c.surface, color: c.ink, fontSize: 13 }} />
+        <View pointerEvents="none" style={{ position: 'absolute', left: 12, top: 0, bottom: 0, justifyContent: 'center' }}>
+          <FontAwesome6 name="magnifying-glass" size={13} color={c.secondary} />
+        </View>
+        {!!search && (
+          <Pressable onPress={() => setSearch('')} hitSlop={8} style={{ position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center' }}>
+            <FontAwesome6 name="circle-xmark" size={14} color={c.secondary} />
+          </Pressable>
+        )}
       </View>
-      {list.length ? list.map((r) => <ReportCard key={r.id} r={r} onNotif={onNotif} />) : (
+
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+        <Dropdown label="Kategori" value={catFilter} options={catOptions} onChange={setCatFilter} />
+        <Dropdown label="Status" value={filter} options={statusOptions} onChange={setFilter} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <Txt small secondary>{filtering ? `Menampilkan ${list.length} dari ${total} aduan` : `${total} aduan`}</Txt>
+        {filtering ? <Pressable onPress={reset} hitSlop={8}><Txt small bold style={{ color: c.link }}>Reset filter</Txt></Pressable> : null}
+      </View>
+
+      {list.length ? list.map((r) => <ReportCard key={r.id} r={r} onNotif={onNotif} onDetail={onDetail} />) : (
         <Card style={{ alignItems: 'center', paddingVertical: 28 }}>
-          <FontAwesome6 name="file-circle-plus" size={26} color="#60a5fa" />
-          <Txt bold style={{ marginTop: 12 }}>{data.reports.length ? 'Belum ada aduan dengan status ini' : 'Belum ada aduan'}</Txt>
-          <Txt small secondary style={{ marginVertical: 6 }}>Sampaikan masalah di sekitar Anda.</Txt>
-          <Btn primary title="+ Tambah Aduan" onPress={() => onCreate()} />
+          <FontAwesome6 name={data.reports.length ? 'magnifying-glass' : 'file-circle-plus'} size={26} color="#60a5fa" />
+          <Txt bold style={{ marginTop: 12 }}>{data.reports.length ? 'Tidak ada aduan yang cocok' : 'Belum ada aduan'}</Txt>
+          <Txt small secondary style={{ marginVertical: 6, textAlign: 'center' }}>
+            {data.reports.length ? 'Ubah kata kunci atau filter Anda.' : 'Sampaikan masalah di sekitar Anda.'}
+          </Txt>
+          {data.reports.length ? <Btn title="Reset filter" onPress={reset} /> : <Btn primary title="+ Tambah Aduan" onPress={() => onCreate()} />}
         </Card>
       )}
     </ScrollView>
+  );
+}
+
+function ConfirmModal({ visible, title, message, confirmText, busy, onConfirm, onCancel }) {
+  const { c } = useTheme();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <View style={{ flex: 1, backgroundColor: '#020617cc', justifyContent: 'center', padding: 24 }}>
+        <View style={{ backgroundColor: c.surface, borderRadius: 18, padding: 18, borderWidth: 1, borderColor: c.edge }}>
+          <Txt bold style={{ fontSize: 16 }}>{title}</Txt>
+          <Txt style={{ marginVertical: 10 }}>{message}</Txt>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Btn style={{ flex: 1 }} title="Tidak" onPress={onCancel} disabled={busy} />
+            <Btn style={{ flex: 1 }} danger title={busy ? 'Memproses…' : confirmText} onPress={onConfirm} disabled={busy} />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ReportDetailPage({ r, events, onBack, onEdit, onCancel }) {
+  const { c } = useTheme();
+  const rc = useRC();
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  // data.events berurutan terbaru-dulu; timeline dibaca dari yang paling awal
+  const steps = events.filter((e) => e.report === r.id).slice().reverse();
+  const rows = [['Kategori', r.category], ['Instansi', r.agency || '-'], ['Dibuat', stamp(r.createdAt)], ['Lokasi', r.location], ['Uraian', r.description]];
+
+  const doCancel = async () => {
+    setBusy(true); setErr('');
+    try { await onCancel(); }
+    catch (e) { setErr(e.message || 'Gagal membatalkan aduan.'); setBusy(false); setConfirm(false); }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }} refreshControl={rc}>
+      <PageTop title="Detail Aduan" right={<Btn icon="chevron-left" title="Kembali" onPress={onBack} />} />
+
+      <Card>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Txt small secondary>Nomor tiket (tekan lama untuk menyalin)</Txt>
+          <Badge status={r.status} />
+        </View>
+        <Text selectable style={{ fontSize: 17, fontWeight: '800', color: c.title, letterSpacing: 0.5, marginTop: 4 }}>{r.id}</Text>
+        <Txt bold style={{ fontSize: 15, marginTop: 10 }}>{r.title}</Txt>
+        <Progress value={r.progress} />
+        <Txt small secondary>Progress {r.progress}%</Txt>
+      </Card>
+
+      <Card>
+        {rows.map(([k, v]) => (
+          <View key={k} style={{ flexDirection: 'row', marginBottom: 8 }}>
+            <Txt small secondary style={{ width: 76 }}>{k}</Txt>
+            <Txt small style={{ flex: 1 }}>{v}</Txt>
+          </View>
+        ))}
+      </Card>
+
+      {(r.before || r.after) ? (
+        <Card>
+          <Txt bold>Foto & video</Txt>
+          <BeforeAfter before={r.before} after={r.after} />
+          <Txt small secondary>Ketuk foto untuk memperbesar.</Txt>
+        </Card>
+      ) : null}
+
+      <Card>
+        <Txt bold style={{ marginBottom: 12 }}>Perkembangan aduan</Txt>
+        {steps.length ? steps.map((e, i) => {
+          const last = i === steps.length - 1;
+          return (
+            <View key={e.id} style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ alignItems: 'center', width: 24 }}>
+                <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: last ? '#2563eb' : '#dbeafe' }}>
+                  <FontAwesome6 name={e.icon} size={11} color={last ? '#fff' : '#2563eb'} />
+                </View>
+                {!last && <View style={{ width: 2, flex: 1, backgroundColor: c.edge, marginVertical: 2 }} />}
+              </View>
+              <View style={{ flex: 1, paddingBottom: last ? 0 : 16 }}>
+                <Txt bold>{e.status}</Txt>
+                <Txt style={{ marginTop: 2 }}>{e.body}</Txt>
+                <Txt small secondary style={{ marginTop: 2 }}>{stamp(e.time)}</Txt>
+              </View>
+            </View>
+          );
+        }) : <Txt small secondary>Belum ada riwayat.</Txt>}
+      </Card>
+
+      {r.status === 'Dibuat' ? (
+        <Card>
+          <Txt bold>Perbaiki atau batalkan</Txt>
+          <Txt small secondary style={{ marginVertical: 6 }}>Aduan masih bisa diubah atau dibatalkan selama belum diproses petugas.</Txt>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Btn style={{ flex: 1 }} icon="pen" title="Edit aduan" onPress={onEdit} />
+            <Btn style={{ flex: 1 }} danger icon="ban" title="Batalkan aduan" onPress={() => setConfirm(true)} />
+          </View>
+          {!!err && <Txt small style={{ color: '#e87979', marginTop: 8 }}>{err}</Txt>}
+        </Card>
+      ) : (
+        <Card><Txt small secondary>Aduan sudah diproses petugas, jadi tidak dapat diubah atau dibatalkan lagi.</Txt></Card>
+      )}
+
+      <ConfirmModal visible={confirm} busy={busy} title="Batalkan aduan ini?"
+        message="Aduan akan dibatalkan dan tidak diproses petugas. Tindakan ini tidak bisa diurungkan."
+        confirmText="Ya, batalkan" onConfirm={doCancel} onCancel={() => setConfirm(false)} />
+    </ScrollView>
+  );
+}
+
+function EditReportPage({ r, kategori, onCancel, onSave }) {
+  const [title, setTitle] = useState(r.title);
+  const [category, setCategory] = useState(r.category);
+  const [description, setDescription] = useState(r.description === '-' ? '' : r.description);
+  const [location, setLocation] = useState(r.location === '-' ? '' : r.location);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (busy) return;
+    const t = title.trim(), d = description.trim(), l = location.trim();
+    if (!t || !d || !l) { setError('Lengkapi judul, uraian, dan lokasi.'); return; }
+    const kat = kategori.find((k) => k.label_kategori === category);
+    if (!kat) { setError('Daftar kategori belum termuat. Pastikan server menyala, lalu coba lagi.'); return; }
+    setBusy(true); setError('');
+    try { await onSave({ id_kategori: kat.id_kategori, topik: t, deskripsi: d, lokasi_kejadian: l }); }
+    catch (e) { setError(e.message || 'Gagal menyimpan perubahan.'); setBusy(false); }
+  };
+
+  return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <PageTop title="Edit Aduan" right={<Btn title="Batal" onPress={onCancel} />} />
+        <Txt small secondary style={{ marginBottom: 12 }}>#{r.id} · Foto dan video tidak dapat diubah.</Txt>
+        <Card>
+          <Field label="Judul aduan" value={title} onChangeText={setTitle} maxLength={120} />
+          <Txt small bold style={{ fontSize: 12, marginTop: 8, marginBottom: 6 }}>Kategori</Txt>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+            {CATEGORIES.map((k) => <Btn key={k} title={k} active={k === category} onPress={() => setCategory(k)} />)}
+          </View>
+          <Field label="Uraian" value={description} onChangeText={setDescription} maxLength={2000} multiline />
+          <Field label="Lokasi kejadian" value={location} onChangeText={setLocation} maxLength={200} />
+          {!!error && <Txt small style={{ color: '#e87979', marginTop: 8 }}>{error}</Txt>}
+          <Btn primary title={busy ? 'Menyimpan…' : 'Simpan Perubahan'} onPress={save} disabled={busy} style={{ marginTop: 12 }} />
+        </Card>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -494,7 +788,12 @@ function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
       lokasi = `${l} (${a.toFixed(6)}, ${b.toFixed(6)})`;
     }
     const kat = kategori.find((k) => k.label_kategori === category);
-    if (!kat) { setError(`Kategori "${category}" belum ada di database server.`); return; }
+    if (!kat) {
+      setError(kategori.length
+        ? `Kategori "${category}" belum ada di database server.`
+        : 'Daftar kategori belum termuat. Pastikan server menyala, tunggu sebentar, lalu coba lagi.');
+      return;
+    }
     setError('');
     setBusy(true);
     try {
@@ -558,10 +857,11 @@ function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
 
 /* ───────────── Notifikasi ───────────── */
 
-function NotificationsPage({ data, only, onReadAll, onAll, go }) {
+function NotificationsPage({ data, only, onReadAll, onAll, onOpen }) {
+  const rc = useRC();
   const entries = data.events.filter((e) => !only || e.report === only);
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} refreshControl={rc}>
       <PageTop title="Notifikasi" right={<Btn title="Tandai dibaca" onPress={onReadAll} />} />
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <Txt small secondary style={{ flex: 1 }}>Pemberitahuan perkembangan aduan Anda.</Txt>
@@ -578,7 +878,9 @@ function NotificationsPage({ data, only, onReadAll, onAll, go }) {
               <Txt style={{ marginTop: 3 }}>{e.body}</Txt>
               <Txt small secondary style={{ marginTop: 3 }}>#{e.report} · {e.title}</Txt>
               <Txt small secondary>{stamp(e.time)}</Txt>
-              <Btn title="Buka aduan" onPress={() => go('reports')} style={{ marginTop: 8, alignSelf: 'flex-start' }} />
+              {data.reports.some((x) => x.id === e.report)
+                ? <Btn title="Buka aduan" onPress={() => onOpen(e.report)} style={{ marginTop: 8, alignSelf: 'flex-start' }} />
+                : null}
             </View>
           </View>
         </Card>
@@ -603,21 +905,36 @@ function Accordion({ title, children }) {
   );
 }
 
-function ProfilePage({ data, onEdit, onChangePw, onLogout }) {
+function ProfilePage({ data, onEdit, onChangePw, onLogout, onPhoto, onRemovePhoto }) {
+  const { c } = useTheme();
+  const rc = useRC();
+  const [showPhoto, setShowPhoto] = useState(false);
   const p = data.profile;
   const rows = [['Nama', p.name], ['Username', p.username], ['Alamat', p.address || '-'], ['NIK', maskNik(p.nik)], ['Jumlah aduan', String(data.reports.length)]];
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} refreshControl={rc}>
       <PageTop title="Profil Pengadu" right={<Btn title="Edit" onPress={onEdit} />} />
       <Card>
         <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-          <Avatar size={50} />
+          <Pressable onPress={() => setShowPhoto(!showPhoto)}><Avatar size={50} uri={p.foto} /></Pressable>
           <View style={{ flex: 1, gap: 4 }}>
             <Txt bold style={{ fontSize: 15 }}>{p.name}</Txt>
             <Txt small secondary>Akun warga · @{p.username}</Txt>
-            <View style={{ alignSelf: 'flex-start' }}><Badge status="Selesai" /></View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Badge status="Selesai" />
+              <Pressable onPress={() => setShowPhoto(!showPhoto)} hitSlop={8}>
+                <Txt small bold style={{ color: c.link }}>{showPhoto ? 'Tutup' : 'Ganti foto'}</Txt>
+              </Pressable>
+            </View>
           </View>
         </View>
+        {showPhoto && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+            <Btn icon="camera" title="Ambil foto" onPress={() => { setShowPhoto(false); onPhoto('camera'); }} />
+            <Btn icon="image" title="Pilih dari galeri" onPress={() => { setShowPhoto(false); onPhoto('library'); }} />
+            {p.foto ? <Btn icon="trash" title="Hapus foto" onPress={() => { setShowPhoto(false); onRemovePhoto(); }} /> : null}
+          </View>
+        )}
       </Card>
       <Card>
         <Txt bold style={{ marginBottom: 8 }}>Data pengadu</Txt>
@@ -710,7 +1027,7 @@ function ChangePasswordPage({ onCancel, onSave }) {
 
 /* ───────────── Navigasi bawah ───────────── */
 
-function TabBar({ page, go }) {
+function TabBar({ page, go, badges = {} }) {
   const { c } = useTheme();
   const insets = useSafeAreaInsets();
   const tabs = [['home', 'house', 'Beranda'], ['reports', 'file-lines', 'Aduan'], ['notifications', 'bell', 'Notif'], ['profile', 'user', 'Profil']];
@@ -722,7 +1039,15 @@ function TabBar({ page, go }) {
         const color = on ? c.link : c.secondary;
         return (
           <Pressable key={id} onPress={() => go(id)} style={{ alignItems: 'center', minWidth: 64 }}>
-            <FontAwesome6 name={icon} size={17} color={color} />
+            <View>
+              <FontAwesome6 name={icon} size={17} color={color} />
+              {badges[id] > 0 && (
+                <View style={{ position: 'absolute', top: -6, right: -10, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3,
+                  backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{badges[id] > 9 ? '9+' : badges[id]}</Text>
+                </View>
+              )}
+            </View>
             <Text style={{ color, fontSize: 10, marginTop: 3, fontWeight: on ? '700' : '500' }}>{label}</Text>
           </Pressable>
         );
@@ -747,16 +1072,23 @@ export default function App() {
   const [creating, setCreating] = useState(null);
   const [editing, setEditing] = useState(false);
   const [changingPw, setChangingPw] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(null);
+  const flash = (text, error = false) => { setNotice({ text, error }); setTimeout(() => setNotice(null), 4000); };
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('Semua');
+  const [search, setSearch] = useState('');
+  const [catFilter, setCatFilter] = useState('Semua');
+  const [detailId, setDetailId] = useState(null);
+  const [editingReport, setEditingReport] = useState(null);
   const [notifOnly, setNotifOnly] = useState(null);
 
   // Ambil semua data milik akun ini dari server
   const refresh = useCallback(async () => {
     try {
-      const [me, aduan, notif] = await Promise.all([
-        authFetch('/api/me'), authFetch('/api/aduan'), authFetch('/api/notifikasi'),
+      const [me, aduan, notif, kat] = await Promise.all([
+        authFetch('/api/me'), authFetch('/api/aduan'), authFetch('/api/notifikasi'), authFetch('/api/kategori'),
       ]);
+      setKategori(kat);
       setData((d) => ({ ...d, profile: fromPelapor(me), reports: aduan.map(mapReport), events: notif.map(mapEvent) }));
       setLoadErr('');
     } catch (e) {
@@ -773,9 +1105,15 @@ export default function App() {
         if (r) setData((d) => ({ ...d, read: JSON.parse(r) }));
       } catch {}
     })();
-    authFetch('/api/kategori').then(setKategori).catch(() => {});
     refresh();
   }, [refresh, READ_KEY]);
+
+  // Refresh otomatis tiap 30 detik (hanya saat app terbuka) dan saat app kembali dibuka
+  useEffect(() => {
+    const id = setInterval(() => { if (AppState.currentState === 'active') refresh(); }, 30000);
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') refresh(); });
+    return () => { clearInterval(id); sub.remove(); };
+  }, [refresh]);
 
   const dark = pref === 'auto' ? system === 'dark' : pref === 'dark';
   const theme = useMemo(() => ({ c: dark ? DARK : LIGHT, dark }), [dark]);
@@ -788,8 +1126,10 @@ export default function App() {
   };
   const themeIcon = { auto: 'circle-half-stroke', light: 'sun', dark: 'moon' }[pref];
 
-  const go = (p) => { setCreating(null); setEditing(false); setChangingPw(false); setNotifOnly(null); setPage(p); refresh(); };
-  const startCreate = (category) => { setPage('reports'); setEditing(false); setChangingPw(false); setCreating({ category }); };
+  const pull = async () => { setRefreshing(true); await refresh(); setRefreshing(false); };
+
+  const go = (p) => { setCreating(null); setDetailId(null); setEditingReport(null); setEditing(false); setChangingPw(false); setNotifOnly(null); setPage(p); refresh(); };
+  const startCreate = (category) => { setPage('reports'); setDetailId(null); setEditingReport(null); setEditing(false); setChangingPw(false); setCreating({ category }); };
 
   const submitReport = async ({ id_kategori, topik, deskripsi, lokasi_kejadian, media }) => {
     const fd = new FormData();
@@ -814,6 +1154,25 @@ export default function App() {
     setCreating(null);
   };
 
+  const openDetail = (id) => {
+    setCreating(null); setEditing(false); setChangingPw(false); setEditingReport(null); setNotifOnly(null);
+    setPage('reports'); setDetailId(id);
+  };
+
+  const saveReport = async (id, body) => {
+    await authFetch(`/api/aduan/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    await refresh();
+    setEditingReport(null);
+    flash('Aduan diperbarui.');
+  };
+
+  const cancelReport = async (id) => {
+    await authFetch(`/api/aduan/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    setDetailId(null);
+    await refresh();
+    flash('Aduan dibatalkan.');
+  };
+
   const saveProfile = async ({ nama, alamat }) => {
     await authFetch('/api/me', { method: 'PATCH', body: { nama, alamat } });
     await refresh();
@@ -823,8 +1182,38 @@ export default function App() {
   const savePassword = async (body) => {
     await authFetch('/api/me/password', { method: 'POST', body });
     setChangingPw(false);
-    setNotice('Kata sandi berhasil diganti.');
-    setTimeout(() => setNotice(''), 4000);
+    flash('Kata sandi berhasil diganti.');
+  };
+
+  const uploadPhoto = async (source) => {
+    try {
+      const perm = source === 'camera' ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) { flash('Izin kamera / galeri ditolak. Aktifkan lewat pengaturan.', true); return; }
+      const opts = { mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.7 };
+      const res = source === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
+      if (res.canceled) return;
+      const a = res.assets[0];
+      if (a.fileSize && a.fileSize > 5 * 1024 * 1024) { flash('Foto maksimal 5 MB.', true); return; }
+      const name = /\.\w{2,4}$/.test(a.fileName || '') ? a.fileName : 'foto-profil.jpg';
+      const fd = new FormData();
+      if (Platform.OS === 'web') {
+        const blob = await (await fetch(a.uri)).blob();
+        fd.append('file', blob, name);
+      } else {
+        fd.append('file', { uri: a.uri, name, type: a.mimeType || 'image/jpeg' });
+      }
+      await authFetch('/api/me/foto', { method: 'POST', body: fd });
+      await refresh();
+      flash('Foto profil diperbarui.');
+    } catch (e) { flash(e.message || 'Foto gagal diunggah.', true); }
+  };
+
+  const removePhoto = async () => {
+    try {
+      await authFetch('/api/me/foto', { method: 'DELETE' });
+      await refresh();
+      flash('Foto profil dihapus.');
+    } catch (e) { flash(e.message || 'Foto gagal dihapus.', true); }
   };
 
   const sendVote = (s) => {
@@ -837,6 +1226,8 @@ export default function App() {
     AsyncStorage.setItem(READ_KEY, JSON.stringify(ids)).catch(() => {});
   };
 
+  const unread = data.events.filter((e) => !data.read.includes(e.id)).length;
+
   const themeToggle = (
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingTop: 4 }}>
       <Pressable onPress={cycleTheme} hitSlop={10}
@@ -847,23 +1238,34 @@ export default function App() {
     </View>
   );
 
+  const detailReport = detailId ? data.reports.find((x) => x.id === detailId) : null;
+
   let body;
   if (page === 'reports' && creating) {
     body = <NewReportPage initialCategory={creating.category} kategori={kategori}
       onCancel={() => setCreating(null)} onSubmit={submitReport} />;
+  } else if (page === 'reports' && editingReport) {
+    body = <EditReportPage r={editingReport} kategori={kategori} onCancel={() => setEditingReport(null)}
+      onSave={(b) => saveReport(editingReport.id, b)} />;
+  } else if (page === 'reports' && detailReport) {
+    body = <ReportDetailPage r={detailReport} events={data.events} onBack={() => setDetailId(null)}
+      onEdit={() => setEditingReport(detailReport)} onCancel={() => cancelReport(detailReport.id)} />;
   } else if (page === 'profile' && editing) {
     body = <EditProfilePage profile={data.profile} onCancel={() => setEditing(false)} onSave={saveProfile} />;
   } else if (page === 'profile' && changingPw) {
     body = <ChangePasswordPage onCancel={() => setChangingPw(false)} onSave={savePassword} />;
   } else if (page === 'home') body = <HomePage data={data} go={go} onCreate={startCreate} onVote={sendVote} />;
-  else if (page === 'reports') body = <ReportsPage data={data} filter={filter} setFilter={setFilter} onCreate={startCreate}
+  else if (page === 'reports') body = <ReportsPage data={data} filter={filter} setFilter={setFilter} search={search} setSearch={setSearch}
+    catFilter={catFilter} setCatFilter={setCatFilter} onCreate={startCreate} onDetail={openDetail}
     onNotif={(id) => { setNotifOnly(id); setPage('notifications'); }} />;
-  else if (page === 'notifications') body = <NotificationsPage data={data} only={notifOnly} go={go}
+  else if (page === 'notifications') body = <NotificationsPage data={data} only={notifOnly} onOpen={openDetail}
     onAll={() => setNotifOnly(null)} onReadAll={readAll} />;
-  else body = <ProfilePage data={data} onEdit={() => setEditing(true)} onChangePw={() => setChangingPw(true)} onLogout={logout} />;
+  else body = <ProfilePage data={data} onEdit={() => setEditing(true)} onChangePw={() => setChangingPw(true)} onLogout={logout}
+    onPhoto={uploadPhoto} onRemovePhoto={removePhoto} />;
 
   return (
     <ThemeCtx.Provider value={theme}>
+    <RefreshCtx.Provider value={{ refreshing, onRefresh: pull }}>
       <StatusBar style={dark ? 'light' : 'dark'} />
       <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.screen }}>
         {themeToggle}
@@ -873,13 +1275,14 @@ export default function App() {
           </Pressable>
         )}
         {!!notice && (
-          <View style={{ backgroundColor: '#d1fae5', paddingVertical: 8, paddingHorizontal: 16 }}>
-            <Text style={{ color: '#065f46', fontSize: 11, fontWeight: '600' }}>{notice}</Text>
+          <View style={{ backgroundColor: notice.error ? '#fee2e2' : '#d1fae5', paddingVertical: 8, paddingHorizontal: 16 }}>
+            <Text style={{ color: notice.error ? '#991b1b' : '#065f46', fontSize: 11, fontWeight: '600' }}>{notice.text}</Text>
           </View>
         )}
         <View style={{ flex: 1 }}>{body}</View>
-        <TabBar page={page} go={go} />
+        <TabBar page={page} go={go} badges={{ notifications: unread }} />
       </SafeAreaView>
+    </RefreshCtx.Provider>
     </ThemeCtx.Provider>
   );
 }

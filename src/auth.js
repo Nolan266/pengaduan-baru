@@ -1,10 +1,28 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 const SESSION_KEY = 'aduan-mobile-session-v2';
 const SESSION_DAYS = 7;
 
-// GANTI dengan IP laptop yang menjalankan server (bukan localhost; HP dan laptop harus satu WiFi)
-export const API_URL = 'http://192.168.1.9:3000';
+// Alamat server dideteksi OTOMATIS, tidak perlu diedit:
+//  - di browser (web)  -> sama dengan alamat halaman (mis. localhost)
+//  - di Expo Go (HP)   -> IP laptop yang menjalankan Expo (HP dan laptop harus satu WiFi)
+// Kalau perlu memaksa alamat lain, isi EXPO_PUBLIC_API_URL, mis. http://192.168.1.9:3000
+const SERVER_PORT = 3000;
+const expoHost = () => {
+  const h = Constants.expoConfig?.hostUri || Constants.expoGoConfig?.debuggerHost || '';
+  return h.split(':')[0] || null;
+};
+// `window` tidak ada saat Expo web merender di Node, jadi dicek dulu
+const webHost = () => (typeof window !== 'undefined' && window.location && window.location.hostname) || 'localhost';
+export const API_URL = (
+  process.env.EXPO_PUBLIC_API_URL ||
+  (Platform.OS === 'web'
+    ? `http://${webHost()}:${SERVER_PORT}`
+    : `http://${expoHost() || 'localhost'}:${SERVER_PORT}`)
+).replace(/\/+$/, '');
+
 export async function loadSession() {
   try {
     const raw = await AsyncStorage.getItem(SESSION_KEY);
@@ -63,11 +81,16 @@ export async function authFetch(path, options = {}) {
   const headers = { ...(options.headers || {}), Authorization: `Bearer ${s.token}` };
   const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
   if (options.body && !isForm && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-  const res = await fetch(`${API_URL}${path}`, {
+  let res;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
     body: options.body && !isForm && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body,
   });
+  } catch {
+    throw new Error('Tidak bisa terhubung ke server. Pastikan server menyala dan API_URL benar.');
+  }
   if (res.status === 401) {
     await signOut();
     throw new Error('Sesi habis, silakan masuk lagi.');

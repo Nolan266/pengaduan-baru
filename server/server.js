@@ -34,6 +34,11 @@ if (db.prepare('SELECT COUNT(*) AS n FROM kategori').get().n === 0) {
   console.log('Tabel kategori kosong: diisi 4 kategori bawaan.');
 }
 
+if (!pelaporCols.includes('foto_url')) {
+  db.exec('ALTER TABLE pelapor ADD COLUMN foto_url TEXT');
+  console.log('Kolom foto_url ditambahkan ke tabel pelapor.');
+}
+
 const tx = (fn) => {
   db.exec('BEGIN');
   try { const r = fn(); db.exec('COMMIT'); return r; }
@@ -68,7 +73,27 @@ const auth = (req, res, next) => {
   next();
 };
 
-const PELAPOR_AMAN = 'id_pelapor, nik, nama, username, avatar_tone, alamat, latitude, longitude, status_aktif'; // tanpa password_hash
+/* ───────────── PEMBATAS PERCOBAAN LOGIN ─────────────
+   5 kali salah beruntun -> dikunci 5 menit. Disimpan di memori (reset kalau server di-restart). */
+const MAX_GAGAL = 5;
+const KUNCI_MS = 5 * 60 * 1000;
+const percobaan = new Map(); // key -> { n, until, last }
+const sisaKunci = (k) => { const a = percobaan.get(k); return a && a.until > Date.now() ? Math.ceil((a.until - Date.now()) / 1000) : 0; };
+const catatGagal = (k) => {
+  const now = Date.now();
+  let a = percobaan.get(k);
+  if (!a || (a.until && a.until <= now) || now - a.last > KUNCI_MS) a = { n: 0, until: 0, last: now };
+  a.n += 1; a.last = now;
+  if (a.n >= MAX_GAGAL) a.until = now + KUNCI_MS;
+  percobaan.set(k, a);
+  return sisaKunci(k);
+};
+const bersihkanGagal = (k) => percobaan.delete(k);
+const pesanKunci = (detik) => `Terlalu banyak percobaan. Coba lagi dalam ${Math.max(1, Math.ceil(detik / 60))} menit.`;
+setInterval(() => { const now = Date.now(); for (const [k, a] of percobaan) if (now - a.last > KUNCI_MS * 2) percobaan.delete(k); }, 60000).unref();
+const samaAman = (a, b) => { const x = Buffer.from(String(a)); const y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+
+const PELAPOR_AMAN = 'id_pelapor, nik, nama, username, foto_url, avatar_tone, alamat, latitude, longitude, status_aktif'; // tanpa password_hash
 
 const app = express();
 app.use(cors());
@@ -111,10 +136,19 @@ app.post('/api/register', (req, res) => {
 
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  const p = db.prepare('SELECT * FROM pelapor WHERE username = ?').get(String(username || '').trim().toLowerCase());
-  if (!p || !cekPw(password || '', p.password_hash))
-    return res.status(401).json({ error: 'Username atau kata sandi salah.' });
+  const uname = String(username || '').trim().toLowerCase();
+  const kunci = `login:${req.ip}:${uname}`;
+  const tunggu = sisaKunci(kunci);
+  if (tunggu) return res.status(429).json({ error: pesanKunci(tunggu) });
+  const p = db.prepare('SELECT * FROM pelapor WHERE username = ?').get(uname);
+  if (!p || !cekPw(password || '', p.password_hash)) {
+    const kini = catatGagal(kunci);
+    return kini
+      ? res.status(429).json({ error: pesanKunci(kini) })
+      : res.status(401).json({ error: 'Username atau kata sandi salah.' });
+  }
   if (!p.status_aktif) return res.status(403).json({ error: 'Akun tidak aktif.' });
+  bersihkanGagal(kunci);
   delete p.password_hash;
   res.json({ token: sign({ id: p.id_pelapor, exp: Date.now() + TOKEN_DAYS * 864e5 }), pelapor: p });
 });
@@ -132,6 +166,36 @@ app.patch('/api/me', auth, (req, res) => {
   const alamat = String(req.body.alamat || '').trim();
   if (!nama) return res.status(400).json({ error: 'Nama wajib diisi' });
   db.prepare('UPDATE pelapor SET nama = ?, alamat = ? WHERE id_pelapor = ?').run(nama, alamat || null, req.user.id);
+  res.json({ ok: true });
+});
+
+// Foto profil: POST (field "file", gambar maks 5 MB) / DELETE
+const uploadFoto = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (_, file, cb) => cb(null, 'avatar-' + Date.now() + path.extname(file.originalname || '').toLowerCase().replace(/[^.\w]/g, '')),
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_, file, cb) => (file.mimetype || '').startsWith('image/') ? cb(null, true) : cb(new Error('File harus berupa gambar.')),
+});
+const hapusFileLama = (url) => { if (url) fs.unlink(path.join(UPLOAD_DIR, path.basename(url)), () => {}); };
+
+app.post('/api/me/foto', auth, (req, res) => {
+  uploadFoto.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Foto maksimal 5 MB.' : err.message });
+    if (!req.file) return res.status(400).json({ error: 'file wajib' });
+    const lama = db.prepare('SELECT foto_url FROM pelapor WHERE id_pelapor = ?').get(req.user.id);
+    const url = '/uploads/' + req.file.filename;
+    db.prepare('UPDATE pelapor SET foto_url = ? WHERE id_pelapor = ?').run(url, req.user.id);
+    hapusFileLama(lama && lama.foto_url);
+    res.json({ foto_url: url });
+  });
+});
+
+app.delete('/api/me/foto', auth, (req, res) => {
+  const lama = db.prepare('SELECT foto_url FROM pelapor WHERE id_pelapor = ?').get(req.user.id);
+  db.prepare('UPDATE pelapor SET foto_url = NULL WHERE id_pelapor = ?').run(req.user.id);
+  hapusFileLama(lama && lama.foto_url);
   res.json({ ok: true });
 });
 
@@ -195,6 +259,40 @@ app.post('/api/aduan', auth, upload.single('file'), (req, res) => {
   }
 });
 
+// Edit aduan sendiri — hanya selama status masih "Verifikasi"
+app.patch('/api/aduan/:id', auth, (req, res) => {
+  const ada = db.prepare('SELECT status, is_arsip FROM aduan WHERE id_aduan = ? AND id_pelapor = ?').get(req.params.id, req.user.id);
+  if (!ada || ada.is_arsip) return res.status(404).json({ error: 'Aduan tidak ditemukan' });
+  const topik = String(req.body.topik || '').trim().slice(0, 120);
+  const deskripsi = String(req.body.deskripsi || '').trim().slice(0, 2000);
+  const lokasi = String(req.body.lokasi_kejadian || '').trim().slice(0, 200);
+  if (!topik || !deskripsi || !lokasi) return res.status(400).json({ error: 'Judul, uraian, dan lokasi wajib diisi' });
+  if (!db.prepare('SELECT 1 FROM kategori WHERE id_kategori = ?').get(req.body.id_kategori))
+    return res.status(400).json({ error: 'Kategori tidak valid' });
+  const r = db.prepare(`UPDATE aduan SET id_kategori = ?, topik = ?, deskripsi = ?, lokasi_kejadian = ?
+                        WHERE id_aduan = ? AND id_pelapor = ? AND status = 'Verifikasi' AND is_arsip = 0`)
+    .run(req.body.id_kategori, topik, deskripsi, lokasi, req.params.id, req.user.id);
+  if (!r.changes) return res.status(409).json({ error: 'Aduan sudah diproses petugas dan tidak bisa diubah lagi.' });
+  res.json({ ok: true });
+});
+
+// Batalkan aduan sendiri — hanya selama "Verifikasi". Aduan diarsipkan (bukan dihapus) dan dicatat di riwayat,
+// jadi admin tetap bisa melihatnya di arsip.
+app.delete('/api/aduan/:id', auth, (req, res) => {
+  const ok = tx(() => {
+    const u = db.prepare(`UPDATE aduan SET is_arsip = 1
+                          WHERE id_aduan = ? AND id_pelapor = ? AND status = 'Verifikasi' AND is_arsip = 0`).run(req.params.id, req.user.id);
+    if (!u.changes) return false;
+    db.prepare(`INSERT INTO progres_aduan (id_aduan, status_tahapan, persentase_progres, catatan_petugas)
+                VALUES (?, 'Dibatalkan', 0, 'Aduan dibatalkan oleh pelapor.')`).run(req.params.id);
+    return true;
+  });
+  if (ok) return res.json({ ok: true });
+  const ada = db.prepare('SELECT is_arsip FROM aduan WHERE id_aduan = ? AND id_pelapor = ?').get(req.params.id, req.user.id);
+  if (!ada || ada.is_arsip) return res.status(404).json({ error: 'Aduan tidak ditemukan' });
+  res.status(409).json({ error: 'Aduan sudah diproses petugas dan tidak bisa dibatalkan lagi.' });
+});
+
 app.post('/api/survei', auth, (req, res) => {
   const { skor, label_kepuasan, emoji } = req.body;
   try {
@@ -212,7 +310,14 @@ if (!process.env.ADMIN_KEY) console.warn('PERINGATAN: ADMIN_KEY belum diset, mem
 const STATUS = ['Verifikasi', 'Diproses', 'Selesai'];
 
 const admin = express.Router();
-admin.use((req, res, next) => (req.get('x-admin-key') === ADMIN_KEY ? next() : res.status(401).json({ error: 'Kunci admin salah' })));
+admin.use((req, res, next) => {
+  const kunci = `admin:${req.ip}`;
+  const tunggu = sisaKunci(kunci);
+  if (tunggu) return res.status(429).json({ error: pesanKunci(tunggu) });
+  if (samaAman(req.get('x-admin-key') || '', ADMIN_KEY)) { bersihkanGagal(kunci); return next(); }
+  const kini = catatGagal(kunci);
+  res.status(kini ? 429 : 401).json({ error: kini ? pesanKunci(kini) : 'Kunci admin salah' });
+});
 
 admin.get('/aduan', (req, res) => {
   const { status, id_kategori, arsip, q } = req.query;
@@ -223,6 +328,15 @@ admin.get('/aduan', (req, res) => {
   if (q) { sql += ' AND (x.topik LIKE ? OR x.deskripsi LIKE ? OR p.nama LIKE ?)'; args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
   sql += ' ORDER BY x.tanggal_aduan DESC';
   res.json(db.prepare(sql).all(...args));
+});
+
+// Detail satu aduan: data + semua media + riwayat progres
+admin.get('/aduan/:id', (req, res) => {
+  const a = db.prepare(`SELECT x.*, p.nama AS nama_pelapor, p.nik FROM (${ADUAN_SQL}) x JOIN pelapor p ON p.id_pelapor = x.id_pelapor WHERE x.id_aduan = ?`).get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Aduan tidak ditemukan' });
+  a.media = db.prepare('SELECT * FROM media_aduan WHERE id_aduan = ?').all(a.id_aduan);
+  a.progres_list = db.prepare('SELECT * FROM progres_aduan WHERE id_aduan = ? ORDER BY updated_at DESC, id_progres DESC').all(a.id_aduan);
+  res.json(a);
 });
 
 admin.get('/statistik', (_, res) => {
@@ -279,5 +393,9 @@ admin.put('/cctv/:id', (req, res) => {
 admin.get('/pelapor', (_, res) => res.json(db.prepare(`SELECT ${PELAPOR_AMAN} FROM pelapor ORDER BY nama`).all()));
 
 app.use('/api/admin', admin);
+app.get('/admin', (_, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 
-app.listen(PORT, '0.0.0.0', () => console.log(`API jalan di http://0.0.0.0:${PORT}  (DB: ${DB_PATH})`));
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`API jalan di http://0.0.0.0:${PORT}  (DB: ${DB_PATH})`);
+  console.log(`Halaman admin: http://localhost:${PORT}/admin`);
+});
