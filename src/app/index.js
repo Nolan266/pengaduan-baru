@@ -10,6 +10,7 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { authFetch, API_URL } from '../auth';
 import { useAuth } from '../AuthGate';
@@ -88,19 +89,12 @@ const EVENT_BODY = { Dibuat: 'Aduan berhasil dibuat dan menunggu verifikasi.', D
 const fromPelapor = (p) => ({ name: p.nama, username: p.username, address: p.alamat || '', nik: p.nik, foto: p.foto_url ? API_URL + p.foto_url : null });
 const maskNik = (n) => { const s = String(n || ''); return s.length > 4 ? '•••• •••• •••• ' + s.slice(-4) : s; };
 
-const mapReport = (r) => {
-  const ms = r.media || [];
-  const before = ms.find((m) => m.tipe_media !== 'foto_sesudah');
-  const after = ms.find((m) => m.tipe_media === 'foto_sesudah');
-  const toMedia = (m) => ({ uri: API_URL + m.url_file, kind: m.tipe_media === 'video' ? 'video' : 'photo' });
-  return {
-    id: r.id_aduan, title: r.topik, category: r.label_kategori, description: r.deskripsi || '-',
-    location: r.lokasi_kejadian || '-', createdAt: toIso(r.tanggal_aduan),
-    status: STATUS_UI[r.status] || r.status, progress: r.progres || 0, agency: r.dinas,
-    ...(before ? { before: toMedia(before) } : {}),
-    ...(after ? { after: toMedia(after) } : {}),
-  };
-};
+const mapReport = (r) => ({
+  id: r.id_aduan, title: r.topik, category: r.label_kategori, description: r.deskripsi || '-',
+  location: r.lokasi_kejadian || '-', createdAt: toIso(r.tanggal_aduan),
+  status: STATUS_UI[r.status] || r.status, progress: r.progres || 0, agency: r.dinas,
+  media: (r.media || []).map((m) => ({ uri: API_URL + m.url_file, kind: m.tipe_media === 'video' ? 'video' : 'photo', tipe: m.tipe_media })),
+});
 const mapEvent = (p) => {
   const status = STATUS_UI[p.status_tahapan] || p.status_tahapan;
   return {
@@ -409,31 +403,50 @@ function HomePage({ data, go, onCreate, onVote }) {
 
 /* ───────────── Aduan ───────────── */
 
-function PhotoViewer({ uri, onClose }) {
+function PhotoViewer({ view, onClose, onIndex }) {
+  const uris = view ? view.uris : [];
+  const i = view ? view.index : 0;
+  const n = uris.length;
+  const nav = { width: 40, height: 40, borderRadius: 20, backgroundColor: '#ffffff22', alignItems: 'center', justifyContent: 'center' };
   return (
-    <Modal visible={!!uri} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: '#000000ee', justifyContent: 'center', padding: 12 }}>
-        {uri ? <Image source={{ uri }} style={{ width: '100%', height: '80%' }} resizeMode="contain" /> : null}
-        <Text style={{ color: '#fff', textAlign: 'center', marginTop: 12, fontSize: 12 }}>Ketuk di mana saja untuk menutup</Text>
-      </Pressable>
+    <Modal visible={!!view} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#000000ee', justifyContent: 'center', padding: 12 }}>
+        <Pressable onPress={onClose} style={StyleSheet.absoluteFill} />
+        {uris[i] ? <Image source={{ uri: uris[i] }} style={{ width: '100%', height: '72%' }} resizeMode="contain" /> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 14, minHeight: 40 }}>
+          {n > 1 ? <Pressable onPress={() => onIndex((i - 1 + n) % n)} hitSlop={10} style={nav}><FontAwesome6 name="chevron-left" size={16} color="#fff" /></Pressable> : null}
+          {n > 1 ? <Text style={{ color: '#fff', fontSize: 12 }}>{i + 1} / {n}</Text> : null}
+          {n > 1 ? <Pressable onPress={() => onIndex((i + 1) % n)} hitSlop={10} style={nav}><FontAwesome6 name="chevron-right" size={16} color="#fff" /></Pressable> : null}
+        </View>
+        <Pressable onPress={onClose} style={{ alignSelf: 'center', marginTop: 14, paddingVertical: 8, paddingHorizontal: 18, borderRadius: 10, backgroundColor: '#ffffff22' }}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Tutup</Text>
+        </Pressable>
+      </View>
     </Modal>
   );
 }
 
-function BeforeAfter({ before, after }) {
+// Foto & video sebuah aduan. items: [{ uri, kind: 'photo'|'video', tipe }]
+function MediaGallery({ items = [] }) {
   const { c } = useTheme();
-  const [big, setBig] = useState(null);
-  if (!before && !after) return null;
-  const viewer = <PhotoViewer uri={big} onClose={() => setBig(null)} />;
-  if (before && after && before.kind === 'photo' && after.kind === 'photo') {
+  const [view, setView] = useState(null);
+  if (!items.length) return null;
+  const sebelum = items.filter((m) => m.tipe !== 'foto_sesudah');
+  const sesudah = items.filter((m) => m.tipe === 'foto_sesudah');
+  const fotoSebelum = sebelum.filter((m) => m.kind === 'photo');
+  const videoSebelum = sebelum.filter((m) => m.kind === 'video');
+  const viewer = <PhotoViewer view={view} onClose={() => setView(null)} onIndex={(i) => setView((v) => ({ ...v, index: i }))} />;
+
+  // tepat 1 foto sebelum + 1 foto sesudah -> berdampingan
+  if (fotoSebelum.length === 1 && sesudah.length === 1 && !videoSebelum.length) {
     return (
       <View style={{ marginVertical: 10 }}>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          {[['Sebelum', before], ['Sesudah', after]].map(([label, m]) => {
+          {[['Sebelum', fotoSebelum[0]], ['Sesudah', sesudah[0]]].map(([label, m]) => {
             const done = label === 'Sesudah';
             return (
               <View key={label} style={{ flex: 1, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: c.edge }}>
-                <Pressable onPress={() => setBig(m.uri)}>
+                <Pressable onPress={() => setView({ uris: [m.uri], index: 0 })}>
                   <Image source={{ uri: m.uri }} style={{ width: '100%', height: 130, backgroundColor: '#020617' }} resizeMode="cover" />
                 </Pressable>
                 <View style={{ padding: 6, backgroundColor: done ? '#d1fae5' : c.screen }}>
@@ -447,12 +460,31 @@ function BeforeAfter({ before, after }) {
       </View>
     );
   }
+
+  const thumbs = (list, label, done) => (
+    <View>
+      <View style={{ alignSelf: 'flex-start', marginBottom: 6, backgroundColor: done ? '#d1fae5' : c.screen, borderRadius: 6,
+        paddingVertical: 2, paddingHorizontal: 8, borderWidth: done ? 0 : 1, borderColor: c.edge }}>
+        <Text style={{ fontSize: 10, fontWeight: '700', color: done ? '#065f46' : c.secondary }}>{label}</Text>
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {list.map((m, i) => (
+          <Pressable key={`${m.uri}-${i}`} onPress={() => setView({ uris: list.map((x) => x.uri), index: i })}
+            style={{ width: 92, height: 92, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: c.edge }}>
+            <Image source={{ uri: m.uri }} style={{ width: '100%', height: '100%', backgroundColor: '#020617' }} resizeMode="cover" />
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+
   return (
-    <>
-      {before ? <SavedMedia media={before} caption={after ? 'Sebelum penanganan' : 'Lampiran aduan'} onOpen={setBig} /> : null}
-      {after ? <SavedMedia media={after} caption="Sesudah penanganan" onOpen={setBig} /> : null}
+    <View style={{ marginVertical: 10, gap: 10 }}>
+      {fotoSebelum.length ? thumbs(fotoSebelum, `Foto aduan (${fotoSebelum.length})`, false) : null}
+      {videoSebelum.map((v, i) => <SavedMedia key={`${v.uri}-${i}`} media={v} caption="Video aduan" />)}
+      {sesudah.length ? thumbs(sesudah, `Sesudah penanganan (${sesudah.length})`, true) : null}
       {viewer}
-    </>
+    </View>
   );
 }
 
@@ -468,7 +500,7 @@ function ReportCard({ r, onNotif, onDetail }) {
       <Txt small secondary style={{ marginTop: 5 }}>
         <FontAwesome6 name="location-dot" size={10} color="#64748b" /> {r.location}
       </Txt>
-      <BeforeAfter before={r.before} after={r.after} />
+      <MediaGallery items={r.media} />
       <Progress value={r.progress} />
       <Txt small secondary style={{ marginBottom: 8 }}>Progress {r.progress}% · {r.agency}</Txt>
       <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -637,10 +669,10 @@ function ReportDetailPage({ r, events, onBack, onEdit, onCancel }) {
         ))}
       </Card>
 
-      {(r.before || r.after) ? (
+      {r.media.length ? (
         <Card>
           <Txt bold>Foto & video</Txt>
-          <BeforeAfter before={r.before} after={r.after} />
+          <MediaGallery items={r.media} />
           <Txt small secondary>Ketuk foto untuk memperbesar.</Txt>
         </Card>
       ) : null}
@@ -729,6 +761,46 @@ function EditReportPage({ r, kategori, onCancel, onSave }) {
   );
 }
 
+const MAX_FOTO = 5;
+const MAX_FOTO_MB = 2;
+const MAX_VIDEO_MB = 30;
+const MAX_VIDEO_DETIK = 30;
+const MB = 1024 * 1024;
+
+const sizeOf = async (uri) => { try { return (await (await fetch(uri)).blob()).size; } catch { return null; } };
+
+// Kecilkan foto: sisi terpanjang <= maxSide, JPEG. Mendukung API baru & lama expo-image-manipulator.
+async function renderJpeg(uri, w, h, maxSide, quality) {
+  const resize = w && h ? (w >= h ? { width: Math.min(w, maxSide) } : { height: Math.min(h, maxSide) }) : { width: maxSide };
+  const M = ImageManipulator;
+  if (M.ImageManipulator && M.ImageManipulator.manipulate) {
+    const ctx = M.ImageManipulator.manipulate(uri);
+    ctx.resize(resize);
+    const img = await ctx.renderAsync();
+    return img.saveAsync({ compress: quality, format: M.SaveFormat.JPEG });
+  }
+  return M.manipulateAsync(uri, [{ resize }], { compress: quality, format: M.SaveFormat.JPEG });
+}
+
+// Dicoba bertahap makin kecil sampai <= 2 MB
+async function shrinkPhoto(asset) {
+  for (const [maxSide, quality] of [[1600, 0.7], [1280, 0.55], [1000, 0.4]]) {
+    const out = await renderJpeg(asset.uri, asset.width, asset.height, maxSide, quality);
+    const size = await sizeOf(out.uri);
+    if (size == null || size <= MAX_FOTO_MB * MB) return out;
+  }
+  throw new Error('Foto terlalu besar');
+}
+
+const addFile = async (fd, field, uri, name, type) => {
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(uri)).blob();
+    fd.append(field, blob.type ? blob : new Blob([blob], { type }), name);
+  } else {
+    fd.append(field, { uri, name, type });
+  }
+};
+
 function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
   const { c } = useTheme();
   const [title, setTitle] = useState('');
@@ -737,25 +809,53 @@ function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
   const [location, setLocation] = useState('');
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
-  const [media, setMedia] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [video, setVideo] = useState(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [geoMsg, setGeoMsg] = useState('Koordinat (opsional) akan ditambahkan ke keterangan lokasi.');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const pick = async (kind, source) => {
+  const askPermission = async (source) => {
+    const perm = source === 'camera' ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) setMsg('Izin kamera / galeri ditolak. Aktifkan lewat pengaturan HP.');
+    return perm.granted;
+  };
+
+  const addPhotos = async (source) => {
+    const sisa = MAX_FOTO - photos.length;
+    if (sisa <= 0) { setMsg(`Maksimal ${MAX_FOTO} foto per aduan.`); return; }
     try {
-      const perm = source === 'camera' ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) { setMsg('Izin kamera / galeri ditolak. Aktifkan lewat pengaturan HP.'); return; }
-      const opts = { mediaTypes: [kind === 'photo' ? 'images' : 'videos'], quality: 0.8 };
+      if (!(await askPermission(source))) return;
+      const opts = { mediaTypes: ['images'], quality: 1, ...(source === 'library' ? { allowsMultipleSelection: sisa > 1, selectionLimit: sisa } : {}) };
+      const res = source === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
+      if (res.canceled) return;
+      setMediaBusy(true); setMsg('Memproses foto…');
+      const added = []; let gagal = 0;
+      for (const a of res.assets.slice(0, sisa)) {
+        try { const out = await shrinkPhoto(a); added.push({ uri: out.uri, name: `foto-${Date.now()}-${added.length}.jpg` }); }
+        catch { gagal += 1; }
+      }
+      setPhotos((p) => [...p, ...added].slice(0, MAX_FOTO));
+      setMsg(gagal ? `${gagal} foto gagal diproses karena terlalu besar (maks ${MAX_FOTO_MB} MB).` : `${added.length} foto ditambahkan.`);
+    } catch { setMsg('Foto gagal diproses.'); }
+    finally { setMediaBusy(false); }
+  };
+
+  const addVideo = async (source) => {
+    try {
+      if (!(await askPermission(source))) return;
+      const opts = { mediaTypes: ['videos'], videoMaxDuration: MAX_VIDEO_DETIK, quality: 1 };
       const res = source === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
       if (res.canceled) return;
       const a = res.assets[0];
-      const maxMb = kind === 'photo' ? 8 : 30;
-      if (a.fileSize && a.fileSize > maxMb * 1024 * 1024) { setMsg(`${kind === 'photo' ? 'Foto' : 'Video'} maksimal ${maxMb} MB.`); return; }
-      setMedia({ uri: a.uri, kind, name: a.fileName || `${kind}-${Date.now()}` });
-      setMsg(kind === 'video' ? 'Video siap dilampirkan.' : 'Foto siap dilampirkan.');
-    } catch (e) { setMsg('Lampiran gagal diproses.'); }
+      if (a.fileSize && a.fileSize > MAX_VIDEO_MB * MB) {
+        setMsg(`Video maksimal ${MAX_VIDEO_MB} MB (sekitar ${MAX_VIDEO_DETIK} detik). Pilih video yang lebih pendek.`); return;
+      }
+      setVideo({ uri: a.uri, kind: 'video', name: a.fileName || `video-${Date.now()}.mp4`, mime: a.mimeType || 'video/mp4' });
+      setMsg('Video siap dilampirkan.');
+    } catch { setMsg('Video gagal diproses.'); }
   };
 
   const useMyLocation = async () => {
@@ -769,14 +869,8 @@ function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
     } catch { setGeoMsg('Lokasi tidak diperoleh. Isi koordinat manual.'); }
   };
 
-  const geoLabel = () => {
-    if (!lat && !lng) return 'Geotag belum ditentukan';
-    const a = Number(lat), b = Number(lng);
-    return Number.isFinite(a) && Number.isFinite(b) && lat && lng ? `Lokasi kejadian · ${a.toFixed(6)}, ${b.toFixed(6)}` : 'Lengkapi koordinat lokasi';
-  };
-
   const submit = async () => {
-    if (busy) return;
+    if (busy || mediaBusy) return;
     const t = title.trim(), d = description.trim(), l = location.trim();
     if (!t || !d || !l) { setError('Lengkapi semua kolom aduan.'); return; }
     let lokasi = l;
@@ -797,7 +891,7 @@ function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
     setError('');
     setBusy(true);
     try {
-      await onSubmit({ id_kategori: kat.id_kategori, topik: t, deskripsi: d, lokasi_kejadian: lokasi, media });
+      await onSubmit({ id_kategori: kat.id_kategori, topik: t, deskripsi: d, lokasi_kejadian: lokasi, photos, video });
     } catch (e) {
       setError(e.message || 'Aduan gagal dikirim.');
       setBusy(false);
@@ -818,26 +912,44 @@ function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
           <Field label="Uraian" value={description} onChangeText={setDescription} maxLength={2000} multiline placeholder="Jelaskan kejadian dan dampaknya" />
           <Field label="Lokasi kejadian" value={location} onChangeText={setLocation} maxLength={200} placeholder="Alamat atau patokan lokasi" />
 
-          <Txt small bold style={{ fontSize: 12, marginTop: 8 }}>Foto / Video Aduan</Txt>
+          <Txt small bold style={{ fontSize: 12, marginTop: 8 }}>Foto ({photos.length}/{MAX_FOTO})</Txt>
+          <Txt secondary style={{ fontSize: 10, marginTop: 2 }}>Maksimal {MAX_FOTO} foto, {MAX_FOTO_MB} MB per foto. Foto besar dikecilkan otomatis.</Txt>
           <View style={{ flexDirection: 'row', gap: 7, marginVertical: 8 }}>
-            <Btn style={{ flex: 1 }} icon="camera" title="Ambil Foto" onPress={() => pick('photo', 'camera')} />
-            <Btn style={{ flex: 1 }} icon="video" title="Ambil Video" onPress={() => pick('video', 'camera')} />
+            <Btn style={{ flex: 1 }} icon="camera" title="Ambil Foto" onPress={() => addPhotos('camera')} disabled={mediaBusy || photos.length >= MAX_FOTO} />
+            <Btn style={{ flex: 1 }} icon="image" title="Pilih Foto" onPress={() => addPhotos('library')} disabled={mediaBusy || photos.length >= MAX_FOTO} />
           </View>
-          <View style={{ flexDirection: 'row', gap: 7, marginBottom: 8 }}>
-            <Btn style={{ flex: 1 }} icon="image" title="Pilih Foto" onPress={() => pick('photo', 'library')} />
-            <Btn style={{ flex: 1 }} icon="film" title="Pilih Video" onPress={() => pick('video', 'library')} />
+          {photos.length ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+              {photos.map((p, i) => (
+                <View key={p.uri} style={{ width: 88, height: 88, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: c.edge }}>
+                  <Image source={{ uri: p.uri }} style={{ width: '100%', height: '100%', backgroundColor: '#020617' }} resizeMode="cover" />
+                  <Pressable onPress={() => setPhotos((x) => x.filter((_, j) => j !== i))} hitSlop={6}
+                    style={{ position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: '#000000aa', alignItems: 'center', justifyContent: 'center' }}>
+                    <FontAwesome6 name="xmark" size={11} color="#fff" />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={{ borderWidth: 1, borderStyle: 'dashed', borderColor: '#60a5fa', borderRadius: 12, alignItems: 'center', padding: 18, backgroundColor: c.screen }}>
+              <FontAwesome6 name="images" size={26} color="#60a5fa" />
+              <Txt small secondary style={{ marginTop: 6 }}>Belum ada foto</Txt>
+            </View>
+          )}
+
+          <Txt small bold style={{ fontSize: 12, marginTop: 14 }}>Video (opsional)</Txt>
+          <Txt secondary style={{ fontSize: 10, marginTop: 2 }}>Maksimal 1 video, {MAX_VIDEO_MB} MB (sekitar {MAX_VIDEO_DETIK} detik).</Txt>
+          <View style={{ flexDirection: 'row', gap: 7, marginVertical: 8 }}>
+            <Btn style={{ flex: 1 }} icon="video" title="Ambil Video" onPress={() => addVideo('camera')} disabled={mediaBusy} />
+            <Btn style={{ flex: 1 }} icon="film" title="Pilih Video" onPress={() => addVideo('library')} disabled={mediaBusy} />
           </View>
-          <View style={{ minHeight: 155, borderWidth: 1, borderStyle: 'dashed', borderColor: '#60a5fa', borderRadius: 12, overflow: 'hidden', backgroundColor: c.screen, justifyContent: 'center' }}>
-            {media
-              ? <SavedMedia media={media} caption={geoLabel()} />
-              : <View style={{ alignItems: 'center', padding: 24 }}>
-                  <FontAwesome6 name="camera" size={32} color="#60a5fa" />
-                  <Txt small secondary style={{ marginTop: 8 }}>Frame pratinjau foto / video</Txt>
-                </View>}
-          </View>
-          <Txt secondary style={{ fontSize: 10, marginTop: 6 }}>Foto maksimal 8 MB · video maksimal 30 MB.</Txt>
-          {media && <Btn title="Hapus lampiran" onPress={() => { setMedia(null); setMsg(''); }} style={{ marginTop: 8, alignSelf: 'flex-start' }} />}
-          {!!msg && <Txt small style={{ color: '#e87979', marginTop: 6 }}>{msg}</Txt>}
+          {video ? (
+            <>
+              <SavedMedia media={video} caption={video.name} />
+              <Btn title="Hapus video" onPress={() => setVideo(null)} style={{ alignSelf: 'flex-start' }} />
+            </>
+          ) : null}
+          {!!msg && <Txt small style={{ color: '#e87979', marginTop: 8 }}>{msg}</Txt>}
 
           <Txt small bold style={{ fontSize: 12, marginTop: 14, marginBottom: 6 }}>Titik lokasi kejadian</Txt>
           <Btn icon="location-crosshairs" title="Gunakan lokasi saya" onPress={useMyLocation} />
@@ -848,7 +960,7 @@ function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
           <Txt secondary style={{ fontSize: 10 }}>{geoMsg}</Txt>
 
           {!!error && <Txt small style={{ color: '#e87979', marginTop: 10 }}>{error}</Txt>}
-          <Btn primary title={busy ? 'Mengirim…' : 'Kirim Aduan'} onPress={submit} disabled={busy} style={{ marginTop: 14 }} />
+          <Btn primary title={busy ? 'Mengirim…' : mediaBusy ? 'Memproses foto…' : 'Kirim Aduan'} onPress={submit} disabled={busy || mediaBusy} style={{ marginTop: 14 }} />
         </Card>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -1131,22 +1243,16 @@ export default function App() {
   const go = (p) => { setCreating(null); setDetailId(null); setEditingReport(null); setEditing(false); setChangingPw(false); setNotifOnly(null); setPage(p); refresh(); };
   const startCreate = (category) => { setPage('reports'); setDetailId(null); setEditingReport(null); setEditing(false); setChangingPw(false); setCreating({ category }); };
 
-  const submitReport = async ({ id_kategori, topik, deskripsi, lokasi_kejadian, media }) => {
+  const submitReport = async ({ id_kategori, topik, deskripsi, lokasi_kejadian, photos, video }) => {
     const fd = new FormData();
     fd.append('id_kategori', id_kategori);
     fd.append('topik', topik);
     fd.append('deskripsi', deskripsi);
     fd.append('lokasi_kejadian', lokasi_kejadian);
-    if (media) {
-      const ext = media.kind === 'video' ? '.mp4' : '.jpg';
-      const name = /\.\w{2,4}$/.test(media.name) ? media.name : media.name + ext;
-      fd.append('tipe_media', media.kind === 'video' ? 'video' : 'foto_sebelum');
-      if (Platform.OS === 'web') {
-        const blob = await (await fetch(media.uri)).blob();
-        fd.append('file', blob, name);
-      } else {
-        fd.append('file', { uri: media.uri, name, type: media.kind === 'video' ? 'video/mp4' : 'image/jpeg' });
-      }
+    for (const p of photos) await addFile(fd, 'foto', p.uri, p.name, 'image/jpeg');
+    if (video) {
+      const name = /\.\w{2,4}$/.test(video.name) ? video.name : video.name + '.mp4';
+      await addFile(fd, 'video', video.uri, name, video.mime);
     }
     await authFetch('/api/aduan', { method: 'POST', body: fd });
     await refresh();

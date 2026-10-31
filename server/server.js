@@ -237,26 +237,55 @@ app.get('/api/notifikasi', auth, (req, res) => {
     WHERE a.id_pelapor = ? ORDER BY p.updated_at DESC, p.id_progres DESC`).all(req.user.id));
 });
 
-// Buat aduan baru. Foto/video opsional (field "file", multipart/form-data)
-app.post('/api/aduan', auth, upload.single('file'), (req, res) => {
-  const { id_kategori, topik, deskripsi, lokasi_kejadian, tipe_media } = req.body;
-  if (!id_kategori || !topik) return res.status(400).json({ error: 'id_kategori dan topik wajib diisi' });
-  const id_aduan = 'ADR-' + Date.now().toString(36).toUpperCase();
-  try {
-    tx(() => {
-      db.prepare(`INSERT INTO aduan (id_aduan, id_pelapor, id_kategori, topik, deskripsi, lokasi_kejadian)
-                  VALUES (?, ?, ?, ?, ?, ?)`).run(id_aduan, req.user.id, id_kategori, topik, deskripsi || null, lokasi_kejadian || null);
-      db.prepare(`INSERT INTO progres_aduan (id_aduan, status_tahapan, persentase_progres, catatan_petugas)
-                  VALUES (?, 'Verifikasi', 0, 'Aduan berhasil dibuat dan menunggu verifikasi.')`).run(id_aduan);
-      if (req.file) {
-        db.prepare(`INSERT INTO media_aduan (id_aduan, tipe_media, url_file, keterangan_media) VALUES (?, ?, ?, ?)`)
-          .run(id_aduan, tipe_media || 'foto_sebelum', '/uploads/' + req.file.filename, req.file.originalname);
-      }
-    });
-    res.status(201).json({ id_aduan });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+// Buat aduan baru. Lampiran opsional (multipart/form-data):
+//   "foto"  : 1–5 file gambar, maks 2 MB per foto
+//   "video" : 1 file video, maks 30 MB
+//   "file"  : (lama) 1 file foto/video, masih diterima supaya app versi lama tidak rusak
+const MAKS_FOTO = 5;
+const MAKS_FOTO_BYTES = 2 * 1024 * 1024;
+const MAKS_VIDEO_BYTES = 30 * 1024 * 1024;
+const uploadAduan = upload.fields([
+  { name: 'foto', maxCount: MAKS_FOTO }, { name: 'video', maxCount: 1 }, { name: 'file', maxCount: 1 },
+]);
+const hapusFiles = (files) => files.forEach((f) => fs.unlink(f.path, () => {}));
+
+app.post('/api/aduan', auth, (req, res) => {
+  uploadAduan(req, res, (err) => {
+    const files = Object.values(req.files || {}).flat();
+    const tolak = (kode, pesan) => { hapusFiles(files); return res.status(kode).json({ error: pesan }); };
+
+    if (err) {
+      return tolak(400, err.code === 'LIMIT_FILE_SIZE' ? 'File terlalu besar (foto maks 2 MB, video maks 30 MB).'
+        : err.code === 'LIMIT_UNEXPECTED_FILE' ? `Maksimal ${MAKS_FOTO} foto dan 1 video.` : err.message);
+    }
+    const { id_kategori, topik, deskripsi, lokasi_kejadian } = req.body;
+    if (!id_kategori || !topik) return tolak(400, 'id_kategori dan topik wajib diisi');
+
+    const foto = files.filter((f) => (f.mimetype || '').startsWith('image/'));
+    const video = files.filter((f) => (f.mimetype || '').startsWith('video/'));
+    if (foto.length + video.length !== files.length) return tolak(400, 'Lampiran harus berupa foto atau video.');
+    if (foto.length > MAKS_FOTO) return tolak(400, `Maksimal ${MAKS_FOTO} foto.`);
+    if (video.length > 1) return tolak(400, 'Maksimal 1 video.');
+    if (foto.some((f) => f.size > MAKS_FOTO_BYTES)) return tolak(400, 'Setiap foto maksimal 2 MB.');
+    if (video.some((f) => f.size > MAKS_VIDEO_BYTES)) return tolak(400, 'Video maksimal 30 MB.');
+
+    const id_aduan = 'ADR-' + Date.now().toString(36).toUpperCase();
+    try {
+      tx(() => {
+        db.prepare(`INSERT INTO aduan (id_aduan, id_pelapor, id_kategori, topik, deskripsi, lokasi_kejadian)
+                    VALUES (?, ?, ?, ?, ?, ?)`).run(id_aduan, req.user.id, id_kategori, topik, deskripsi || null, lokasi_kejadian || null);
+        db.prepare(`INSERT INTO progres_aduan (id_aduan, status_tahapan, persentase_progres, catatan_petugas)
+                    VALUES (?, 'Verifikasi', 0, 'Aduan berhasil dibuat dan menunggu verifikasi.')`).run(id_aduan);
+        const insMedia = db.prepare('INSERT INTO media_aduan (id_aduan, tipe_media, url_file, keterangan_media) VALUES (?, ?, ?, ?)');
+        foto.forEach((f) => insMedia.run(id_aduan, 'foto_sebelum', '/uploads/' + f.filename, f.originalname));
+        video.forEach((f) => insMedia.run(id_aduan, 'video', '/uploads/' + f.filename, f.originalname));
+      });
+      res.status(201).json({ id_aduan, foto: foto.length, video: video.length });
+    } catch (e) {
+      hapusFiles(files);
+      res.status(400).json({ error: e.message });
+    }
+  });
 });
 
 // Edit aduan sendiri — hanya selama status masih "Verifikasi"
