@@ -169,20 +169,20 @@ app.patch('/api/me', auth, (req, res) => {
   res.json({ ok: true });
 });
 
-// Foto profil: POST (field "file", gambar maks 5 MB) / DELETE
+// Foto profil: POST (field "file", gambar maks 4 MB) / DELETE
 const uploadFoto = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
     filename: (_, file, cb) => cb(null, 'avatar-' + Date.now() + path.extname(file.originalname || '').toLowerCase().replace(/[^.\w]/g, '')),
   }),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 4 * 1024 * 1024 },
   fileFilter: (_, file, cb) => (file.mimetype || '').startsWith('image/') ? cb(null, true) : cb(new Error('File harus berupa gambar.')),
 });
 const hapusFileLama = (url) => { if (url) fs.unlink(path.join(UPLOAD_DIR, path.basename(url)), () => {}); };
 
 app.post('/api/me/foto', auth, (req, res) => {
   uploadFoto.single('file')(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Foto maksimal 5 MB.' : err.message });
+    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Foto profil maksimal 4 MB.' : err.message });
     if (!req.file) return res.status(400).json({ error: 'file wajib' });
     const lama = db.prepare('SELECT foto_url FROM pelapor WHERE id_pelapor = ?').get(req.user.id);
     const url = '/uploads/' + req.file.filename;
