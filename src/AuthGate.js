@@ -225,7 +225,7 @@ function AuthScreen({ onDone }) {
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 28 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {/* Header gradasi, gaya sama seperti carousel berita */}
         <LinearGradient
-          colors={['#2563eb', '#4f46e5', '#7c3aed']}
+          colors={['#000000', '#0b1120', '#1e293b']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ paddingTop: 64, paddingBottom: 74, paddingHorizontal: 24, borderBottomLeftRadius: 28, borderBottomRightRadius: 28, overflow: 'hidden' }}

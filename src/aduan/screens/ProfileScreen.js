@@ -1,105 +1,187 @@
-// Layar Profil, edit profil, dan ganti kata sandi.
-import React, { useState } from 'react';
-import { View, ScrollView, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
+// Layar Profil (gaya Telegram), ubah profil, dan ganti kata sandi.
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, ScrollView, Pressable, Animated, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { maskNik } from '../format';
 import { useTheme, useRC } from '../theme';
-import { Txt, Card, Btn, Badge, Avatar, Field, PageTop } from '../ui';
+import { BigAvatar, colorsFor, FadeIn, PopIn, ScaleBtn, SheetMenu, FloatField, NavBar } from '../tg';
+import { Txt, ConfirmModal } from '../ui';
 
-function Accordion({ title, children }) {
+/* ───────────── potongan kecil ───────────── */
+function Group({ children, style }) {
   const { c } = useTheme();
-  const [open, setOpen] = useState(false);
+  return <View style={[{ backgroundColor: c.surface, borderRadius: 16, borderWidth: 1, borderColor: c.edge, overflow: 'hidden' }, style]}>{children}</View>;
+}
+
+function InfoRow({ label, value, last }) {
+  const { c } = useTheme();
   return (
-    <View style={{ borderTopWidth: 1, borderTopColor: c.edge, paddingVertical: 10 }}>
-      <Pressable onPress={() => setOpen(!open)} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <Txt bold>{title}</Txt>
-        <FontAwesome6 name={open ? 'chevron-up' : 'chevron-down'} size={11} color={c.secondary} />
-      </Pressable>
-      {open && <Txt small style={{ marginTop: 6 }}>{children}</Txt>}
+    <View style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.edge }}>
+      <Text selectable style={{ fontSize: 15, color: c.ink }}>{value}</Text>
+      <Text style={{ fontSize: 11, color: c.secondary, marginTop: 2 }}>{label}</Text>
     </View>
   );
 }
 
-export function ProfilePage({ data, onEdit, onChangePw, onLogout, onPhoto, onRemovePhoto }) {
+function Accordion({ title, children, last }) {
   const { c } = useTheme();
-  const rc = useRC();
-  const [showPhoto, setShowPhoto] = useState(false);
-  const p = data.profile;
-  const rows = [['Nama', p.name], ['Username', p.username], ['Alamat', p.address || '-'], ['NIK', maskNik(p.nik)], ['Jumlah aduan', String(data.reports.length)]];
+  const [open, setOpen] = useState(false);
+  const turn = useRef(new Animated.Value(0)).current;
+  useEffect(() => { Animated.timing(turn, { toValue: open ? 1 : 0, duration: 180, useNativeDriver: Platform.OS !== 'web' }).start(); }, [open, turn]);
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} refreshControl={rc}>
-      <PageTop title="Profil Pengadu" right={<Btn title="Edit" onPress={onEdit} />} />
-      <Card>
-        <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-          <Pressable onPress={() => setShowPhoto(!showPhoto)}><Avatar size={50} uri={p.foto} /></Pressable>
-          <View style={{ flex: 1, gap: 4 }}>
-            <Txt bold style={{ fontSize: 15 }}>{p.name}</Txt>
-            <Txt small secondary>Akun warga · @{p.username}</Txt>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Badge status="Selesai" />
-              <Pressable onPress={() => setShowPhoto(!showPhoto)} hitSlop={8}>
-                <Txt small bold style={{ color: c.link }}>{showPhoto ? 'Tutup' : 'Ganti foto'}</Txt>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-        {showPhoto && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
-            <Btn icon="camera" title="Ambil foto" onPress={() => { setShowPhoto(false); onPhoto('camera'); }} />
-            <Btn icon="image" title="Pilih dari galeri" onPress={() => { setShowPhoto(false); onPhoto('library'); }} />
-            {p.foto ? <Btn icon="trash" title="Hapus foto" onPress={() => { setShowPhoto(false); onRemovePhoto(); }} /> : null}
-          </View>
-        )}
-      </Card>
-      <Card>
-        <Txt bold style={{ marginBottom: 8 }}>Data pengadu</Txt>
-        {rows.map(([k, v]) => (
-          <View key={k} style={{ flexDirection: 'row', marginBottom: 8 }}>
-            <Txt small secondary style={{ width: 90 }}>{k}</Txt>
-            <Txt small style={{ flex: 1 }}>{v}</Txt>
-          </View>
-        ))}
-      </Card>
-      <Card>
-        <Txt bold style={{ marginBottom: 4 }}>Akun & aplikasi</Txt>
-        <Accordion title="Keamanan akun">Nomor identitas ditampilkan tersamarkan. Kata sandi disimpan dalam bentuk terenkripsi (hash) di server. Anda dapat menggantinya lewat tombol Ganti kata sandi.</Accordion>
-        <Accordion title="Privasi & penyimpanan">Profil dan aduan Anda tersimpan di server aduan warga, sehingga tetap ada saat Anda masuk dari perangkat lain.</Accordion>
-        <Accordion title="Bantuan penggunaan">Buka Aduan → Tambah untuk membuat aduan. Pantau tahapan Dibuat, Diproses, dan Selesai di tab Notif. Pilih lokasi pada CCTV untuk memutar video simulasi.</Accordion>
-        <Accordion title="Tentang aplikasi">Aduan Masyarakat · Sarana pengaduan fasilitas dan layanan publik. Berita dan CCTV pada beranda merupakan contoh.</Accordion>
-        <Btn title="Ganti kata sandi" icon="key" onPress={onChangePw} style={{ marginTop: 10 }} />
-        <Btn title="Keluar" icon="right-from-bracket" onPress={onLogout} style={{ marginTop: 8 }} />
-      </Card>
+    <View style={{ borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.edge }}>
+      <Pressable onPress={() => setOpen(!open)} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingVertical: 14, paddingHorizontal: 16, backgroundColor: pressed ? c.screen : 'transparent' })}>
+        <Text style={{ fontSize: 14, fontWeight: '600', color: c.ink }}>{title}</Text>
+        <Animated.View style={{ transform: [{ rotate: turn.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] }) }] }}>
+          <FontAwesome6 name="chevron-down" size={11} color={c.secondary} />
+        </Animated.View>
+      </Pressable>
+      {open && <FadeIn y={6}><Txt small style={{ paddingHorizontal: 16, paddingBottom: 14 }}>{children}</Txt></FadeIn>}
+    </View>
+  );
+}
+
+function Action({ icon, label, onPress }) {
+  return (
+    <ScaleBtn onPress={onPress} outerStyle={{ flex: 1 }} style={{ alignItems: 'center', paddingVertical: 12, borderRadius: 16, backgroundColor: '#ffffff2e' }}>
+      <FontAwesome6 name={icon} size={16} color="#fff" />
+      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 5 }}>{label}</Text>
+    </ScaleBtn>
+  );
+}
+
+/* ───────────── Profil ───────────── */
+export function ProfilePage({ data, onEdit, onChangePw, onLogout, onPhoto, onRemovePhoto }) {
+  const rc = useRC();
+  const [sheet, setSheet] = useState(false);
+  const [confirmOut, setConfirmOut] = useState(false);
+  const p = data.profile;
+  const total = data.reports.length;
+  const selesai = data.reports.filter((r) => r.status === 'Selesai').length;
+  const rows = [
+    ['Nama', p.name], ['Username', `@${p.username}`], ['Alamat', p.address || 'Belum diisi'],
+    ['NIK', maskNik(p.nik)], ['Aduan', `${total} aduan · ${selesai} selesai`],
+  ];
+  const items = [
+    { icon: 'camera', label: 'Ambil foto', onPress: () => onPhoto('camera') },
+    { icon: 'image', label: 'Pilih dari galeri', onPress: () => onPhoto('library') },
+    ...(p.foto ? [{ icon: 'trash', label: 'Hapus foto', danger: true, onPress: onRemovePhoto }] : []),
+  ];
+  const accordions = [
+    ['Keamanan akun', 'Nomor identitas ditampilkan tersamarkan. Kata sandi disimpan dalam bentuk terenkripsi (hash) di server. Anda dapat menggantinya lewat tombol Sandi di atas.'],
+    ['Privasi & penyimpanan', 'Profil dan aduan Anda tersimpan di server aduan warga, sehingga tetap ada saat Anda masuk dari perangkat lain.'],
+    ['Bantuan penggunaan', 'Buka Aduan → Tambah untuk membuat aduan. Pantau tahapan Dibuat, Diproses, dan Selesai di tab Notif. Pilih lokasi pada CCTV untuk memutar video simulasi.'],
+    ['Tentang aplikasi', 'Aduan Masyarakat · Sarana pengaduan fasilitas dan layanan publik. Berita dan CCTV pada beranda merupakan contoh.'],
+  ];
+  return (
+    <ScrollView contentContainerStyle={{ paddingBottom: 28 }} refreshControl={rc}>
+      <LinearGradient colors={['#0f172a', '#1e293b', '#312e81']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}        style={{ paddingTop: 26, paddingBottom: 20, paddingHorizontal: 16, alignItems: 'center', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }}>
+        <PopIn>
+          <ScaleBtn onPress={() => setSheet(true)}><BigAvatar uri={p.foto} name={p.name} size={104} ring /></ScaleBtn>
+        </PopIn>
+        <FadeIn delay={120} y={8} style={{ alignItems: 'center' }}>
+          <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 12, textAlign: 'center' }}>{p.name}</Text>
+          <Text style={{ color: '#ffffffd0', fontSize: 12, marginTop: 3 }}>@{p.username} · Warga terverifikasi</Text>
+        </FadeIn>
+        <FadeIn delay={220} y={10} style={{ flexDirection: 'row', gap: 10, marginTop: 18, alignSelf: 'stretch' }}>
+          <Action icon="pen" label="Edit" onPress={onEdit} />
+          <Action icon="key" label="Sandi" onPress={onChangePw} />
+          <Action icon="right-from-bracket" label="Keluar" onPress={() => setConfirmOut(true)} />
+        </FadeIn>
+      </LinearGradient>
+
+      <View style={{ padding: 16, gap: 12 }}>
+        <FadeIn delay={300}>
+          <Group>{rows.map(([k, v], i) => <InfoRow key={k} label={k} value={v} last={i === rows.length - 1} />)}</Group>
+        </FadeIn>
+        <FadeIn delay={380}>
+          <Group>{accordions.map(([t, body], i) => <Accordion key={t} title={t} last={i === accordions.length - 1}>{body}</Accordion>)}</Group>
+        </FadeIn>
+      </View>
+
+      <SheetMenu visible={sheet} onClose={() => setSheet(false)} items={items} />
+      <ConfirmModal visible={confirmOut} title="Keluar dari akun?" confirmText="Keluar"
+        message="Anda perlu masuk lagi dengan username dan kata sandi untuk memakai aplikasi."
+        onConfirm={() => { setConfirmOut(false); onLogout(); }} onCancel={() => setConfirmOut(false)} />
     </ScrollView>
   );
 }
 
-export function EditProfilePage({ profile, onCancel, onSave }) {
-  const [f, setF] = useState({ nama: profile.name, alamat: profile.address });
+/* ───────────── Ubah profil ───────────── */
+export function EditProfilePage({ profile, onCancel, onSave, onPhoto, onRemovePhoto }) {
+  const { c } = useTheme();
+  const [nama, setNama] = useState(profile.name);
+  const [alamat, setAlamat] = useState(profile.address || '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sheet, setSheet] = useState(false);
+  const canPhoto = typeof onPhoto === 'function';
+  const changed = nama.trim() !== profile.name || alamat.trim() !== (profile.address || '');
+
   const save = async () => {
     if (busy) return;
-    if (!f.nama.trim()) { setError('Nama wajib diisi.'); return; }
+    if (!nama.trim()) { setError('Nama wajib diisi.'); return; }
     setBusy(true); setError('');
-    try { await onSave({ nama: f.nama.trim(), alamat: f.alamat.trim() }); }
+    try { await onSave({ nama: nama.trim(), alamat: alamat.trim() }); }
     catch (e) { setError(e.message || 'Gagal menyimpan.'); setBusy(false); }
   };
+
+  const items = canPhoto ? [
+    { icon: 'camera', label: 'Ambil foto', onPress: () => onPhoto('camera') },
+    { icon: 'image', label: 'Pilih dari galeri', onPress: () => onPhoto('library') },
+    ...(profile.foto && onRemovePhoto ? [{ icon: 'trash', label: 'Hapus foto', danger: true, onPress: onRemovePhoto }] : []),
+  ] : [];
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <PageTop title="Edit Profil" right={<Btn title="Batal" onPress={onCancel} />} />
-        <Card>
-          <Field label="Nama" value={f.nama} onChangeText={(v) => setF((o) => ({ ...o, nama: v }))} maxLength={120} />
-          <Field label="Alamat" value={f.alamat} onChangeText={(v) => setF((o) => ({ ...o, alamat: v }))} maxLength={250} />
-          <Txt small secondary>NIK dan username tidak dapat diubah.</Txt>
-          {!!error && <Txt small style={{ color: '#e87979', marginTop: 8 }}>{error}</Txt>}
-          <Btn primary title={busy ? 'Menyimpan…' : 'Simpan Profil'} onPress={save} disabled={busy} style={{ marginTop: 12 }} />
-        </Card>
+        <NavBar title="Ubah Profil" left="Batal" right="Selesai" onLeft={onCancel} onRight={save} rightDisabled={!changed || busy} busy={busy} />
+
+        <PopIn style={{ alignItems: 'center', marginVertical: 10 }}>
+          <ScaleBtn onPress={() => setSheet(true)} disabled={!canPhoto}>
+            <View>
+              <BigAvatar uri={profile.foto} name={nama || profile.name} size={112} />
+              {canPhoto && (
+                <View style={{ position: 'absolute', right: 0, bottom: 0, width: 34, height: 34, borderRadius: 17, backgroundColor: '#2563eb',
+                  borderWidth: 3, borderColor: c.screen, alignItems: 'center', justifyContent: 'center' }}>
+                  <FontAwesome6 name="camera" size={13} color="#fff" />
+                </View>
+              )}
+            </View>
+          </ScaleBtn>
+          {canPhoto && (
+            <Pressable onPress={() => setSheet(true)} hitSlop={8} style={{ marginTop: 10 }}>
+              <Text style={{ color: c.link, fontSize: 14, fontWeight: '600' }}>Ubah foto profil</Text>
+            </Pressable>
+          )}
+        </PopIn>
+
+        <FadeIn delay={120}>
+          <Group>
+            <FloatField label="Nama" value={nama} onChangeText={setNama} maxLength={120} />
+            <FloatField label="Alamat" value={alamat} onChangeText={setAlamat} maxLength={250} multiline counter last />
+          </Group>
+          <Txt small secondary style={{ marginTop: 8, marginHorizontal: 6 }}>Nama dan alamat tampil di profil Anda.</Txt>
+        </FadeIn>
+
+        <FadeIn delay={200} style={{ marginTop: 18 }}>
+          <Group>
+            <InfoRow label="Username" value={`@${profile.username}`} />
+            <InfoRow label="NIK" value={maskNik(profile.nik)} last />
+          </Group>
+          <Txt small secondary style={{ marginTop: 8, marginHorizontal: 6 }}>Username dan NIK tidak dapat diubah.</Txt>
+        </FadeIn>
+
+        {!!error && <Txt small style={{ color: '#e87979', marginTop: 12, marginHorizontal: 6 }}>{error}</Txt>}
       </ScrollView>
+      <SheetMenu visible={sheet} onClose={() => setSheet(false)} items={items} />
     </KeyboardAvoidingView>
   );
 }
 
+/* ───────────── Ganti kata sandi ───────────── */
 export function ChangePasswordPage({ onCancel, onSave }) {
   const { c } = useTheme();
   const [lama, setLama] = useState('');
@@ -123,18 +205,24 @@ export function ChangePasswordPage({ onCancel, onSave }) {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <PageTop title="Ganti Kata Sandi" right={<Btn title="Batal" onPress={onCancel} />} />
-        <Card>
-          <Field label="Kata sandi lama" value={lama} onChangeText={setLama} secureTextEntry={!show} autoCapitalize="none" maxLength={100} />
-          <Field label="Kata sandi baru" value={baru} onChangeText={setBaru} secureTextEntry={!show} autoCapitalize="none" maxLength={100} placeholder="Minimal 6 karakter" />
-          <Field label="Ulangi kata sandi baru" value={ulang} onChangeText={setUlang} secureTextEntry={!show} autoCapitalize="none" maxLength={100} onSubmitEditing={save} />
-          <Pressable onPress={() => setShow(!show)} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+        <NavBar title="Kata Sandi" left="Batal" right="Simpan" onLeft={onCancel} onRight={save} rightDisabled={busy} busy={busy} />
+        <PopIn style={{ alignItems: 'center', marginVertical: 14 }}>
+          <View style={{ width: 76, height: 76, borderRadius: 38, backgroundColor: c.indigoBg, borderWidth: 1, borderColor: c.indigoEdge, alignItems: 'center', justifyContent: 'center' }}>
+            <FontAwesome6 name="key" size={26} color={c.indigoText} />
+          </View>
+        </PopIn>
+        <FadeIn delay={120}>
+          <Group>
+            <FloatField label="Kata sandi lama" value={lama} onChangeText={setLama} secureTextEntry={!show} autoCapitalize="none" maxLength={100} />
+            <FloatField label="Kata sandi baru (min. 6 karakter)" value={baru} onChangeText={setBaru} secureTextEntry={!show} autoCapitalize="none" maxLength={100} />
+            <FloatField label="Ulangi kata sandi baru" value={ulang} onChangeText={setUlang} secureTextEntry={!show} autoCapitalize="none" maxLength={100} onSubmitEditing={save} last />
+          </Group>
+          <Pressable onPress={() => setShow(!show)} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, marginHorizontal: 6 }}>
             <FontAwesome6 name={show ? 'eye-slash' : 'eye'} size={12} color={c.link} />
             <Txt small style={{ color: c.link }}>{show ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}</Txt>
           </Pressable>
-          {!!error && <Txt small style={{ color: '#e87979', marginTop: 10 }}>{error}</Txt>}
-          <Btn primary title={busy ? 'Menyimpan…' : 'Simpan Kata Sandi'} onPress={save} disabled={busy} style={{ marginTop: 12 }} />
-        </Card>
+        </FadeIn>
+        {!!error && <Txt small style={{ color: '#e87979', marginTop: 12, marginHorizontal: 6 }}>{error}</Txt>}
       </ScrollView>
     </KeyboardAvoidingView>
   );
