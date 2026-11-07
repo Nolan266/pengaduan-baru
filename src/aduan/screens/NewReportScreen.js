@@ -1,17 +1,22 @@
 // Form tambah aduan (1–5 foto + 1 video).
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, ScrollView, Pressable, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { FontAwesome6 } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { CATEGORIES } from '../constants';
+import { loadCache, saveCache, clearCache } from '../cache';
 import { SavedMedia } from '../media';
+import { useOnline } from '../net';
 import { MAX_FOTO, MAX_FOTO_MB, MAX_VIDEO_MB, MAX_VIDEO_DETIK, MB, shrinkPhoto } from '../photos';
 import { useTheme } from '../theme';
-import { Txt, Card, Btn, Field, PageTop } from '../ui';
+import { Txt, Card, Btn, Field, PageTop, Dropdown } from '../ui';
 
-export function NewReportPage({ initialCategory, kategori, onCancel, onSubmit }) {
+const CATEGORY_OPTIONS = CATEGORIES.map((k) => ({ value: k, label: k }));
+
+export function NewReportPage({ initialCategory, kategori, draftKey, onCancel, onSubmit }) {
   const { c } = useTheme();
+  const online = useOnline();
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState(initialCategory || CATEGORIES[0]);
   const [description, setDescription] = useState('');
@@ -25,6 +30,29 @@ export function NewReportPage({ initialCategory, kategori, onCancel, onSubmit })
   const [geoMsg, setGeoMsg] = useState('Koordinat (opsional) akan ditambahkan ke keterangan lokasi.');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  // Pulihkan draft teks yang tersimpan (foto dan video tidak ikut disimpan)
+  useEffect(() => {
+    let alive = true;
+    loadCache(draftKey).then((d) => {
+      if (!alive) return;
+      if (d) {
+        setTitle(d.title || ''); setDescription(d.description || ''); setLocation(d.location || '');
+        setLat(d.lat || ''); setLng(d.lng || '');
+        if (!initialCategory && CATEGORIES.includes(d.category)) setCategory(d.category);
+        if (d.title || d.description || d.location) setMsg('Draft sebelumnya dipulihkan.');
+      }
+      setReady(true);
+    });
+    return () => { alive = false; };
+  }, [draftKey, initialCategory]);
+
+  // Simpan draft otomatis setiap ada perubahan
+  useEffect(() => {
+    if (!ready || !draftKey) return;
+    saveCache(draftKey, { title, category, description, location, lat, lng });
+  }, [ready, draftKey, title, category, description, location, lat, lng]);
 
   const askPermission = async (source) => {
     const perm = source === 'camera' ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -80,6 +108,7 @@ export function NewReportPage({ initialCategory, kategori, onCancel, onSubmit })
 
   const submit = async () => {
     if (busy || mediaBusy) return;
+    if (!online) { setError('Anda offline. Draft tersimpan otomatis, kirim lagi setelah tersambung ke internet.'); return; }
     const t = title.trim(), d = description.trim(), l = location.trim();
     if (!t || !d || !l) { setError('Lengkapi semua kolom aduan.'); return; }
     let lokasi = l;
@@ -101,6 +130,7 @@ export function NewReportPage({ initialCategory, kategori, onCancel, onSubmit })
     setBusy(true);
     try {
       await onSubmit({ id_kategori: kat.id_kategori, topik: t, deskripsi: d, lokasi_kejadian: lokasi, photos, video });
+      clearCache(draftKey); // terkirim -> draft dibuang
     } catch (e) {
       setError(e.message || 'Aduan gagal dikirim.');
       setBusy(false);
@@ -114,10 +144,7 @@ export function NewReportPage({ initialCategory, kategori, onCancel, onSubmit })
         <Txt small secondary style={{ marginBottom: 12 }}>Aduan baru dimulai dengan status Dibuat.</Txt>
         <Card>
           <Field label="Judul aduan" value={title} onChangeText={setTitle} maxLength={120} placeholder="Contoh: Lampu jalan padam" />
-          <Txt small bold style={{ fontSize: 12, marginTop: 8, marginBottom: 6 }}>Kategori</Txt>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-            {CATEGORIES.map((k) => <Btn key={k} title={k} active={k === category} onPress={() => setCategory(k)} />)}
-          </View>
+          <Dropdown field label="Kategori" value={category} options={CATEGORY_OPTIONS} onChange={setCategory} />
           <Field label="Uraian" value={description} onChangeText={setDescription} maxLength={2000} multiline placeholder="Jelaskan kejadian dan dampaknya" />
           <Field label="Lokasi kejadian" value={location} onChangeText={setLocation} maxLength={200} placeholder="Alamat atau patokan lokasi" />
 

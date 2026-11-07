@@ -4,6 +4,7 @@ import { View, Text, Pressable, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useTheme } from './theme';
+import { OfflineBadge } from './net';
 
 const TABS = [
   ['home', 'house', 'Beranda'],
@@ -112,25 +113,32 @@ export function TabBar({ page, go, badges = {} }) {
   });
 
   return (
-    <View
-      onLayout={(e) => setW(e.nativeEvent.layout.width)}
-      style={{
-        backgroundColor: c.surface, borderTopWidth: 1, borderTopColor: c.edge,
-        paddingTop: 8, paddingBottom: Math.max(insets.bottom, 8),
-      }}
-    >
-      <Animated.View
-        pointerEvents="none"
+    <View style={{ zIndex: 10 }}>
+      {/* Badge offline melayang tepat di atas tab bar, tidak menggeser konten */}
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: '100%', paddingBottom: 8 }}>
+        <OfflineBadge />
+      </View>
+
+      <View
+        onLayout={(e) => setW(e.nativeEvent.layout.width)}
         style={{
-          position: 'absolute', top: -1, left: 0, width: IND_W, height: 3,
-          borderBottomLeftRadius: 3, borderBottomRightRadius: 3, backgroundColor: c.link,
-          opacity: indOpacity, transform: [{ translateX }],
+          backgroundColor: c.surface, borderTopWidth: 1, borderTopColor: c.edge,
+          paddingTop: 8, paddingBottom: Math.max(insets.bottom, 8),
         }}
-      />
-      <View style={{ flexDirection: 'row' }}>
-        {TABS.map(([id, icon, label]) => (
-          <TabItem key={id} icon={icon} label={label} c={c} active={page === id} badge={badges[id] || 0} onPress={() => go(id)} />
-        ))}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute', top: -1, left: 0, width: IND_W, height: 3,
+            borderBottomLeftRadius: 3, borderBottomRightRadius: 3, backgroundColor: c.link,
+            opacity: indOpacity, transform: [{ translateX }],
+          }}
+        />
+        <View style={{ flexDirection: 'row' }}>
+          {TABS.map(([id, icon, label]) => (
+            <TabItem key={id} icon={icon} label={label} c={c} active={page === id} badge={badges[id] || 0} onPress={() => go(id)} />
+          ))}
+        </View>
       </View>
     </View>
   );

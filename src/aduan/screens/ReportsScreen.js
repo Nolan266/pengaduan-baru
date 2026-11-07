@@ -6,6 +6,7 @@ import { CATEGORIES } from '../constants';
 import { stamp } from '../format';
 import { MediaGallery } from '../media';
 import { useTheme, useRC } from '../theme';
+import { FadeIn } from '../tg';
 import { Txt, Card, Btn, Badge, Progress, PageTop, Dropdown } from '../ui';
 
 function ReportCard({ r, onNotif, onDetail }) {
@@ -31,14 +32,26 @@ function ReportCard({ r, onNotif, onDetail }) {
   );
 }
 
-export function ReportsPage({ data, filter, setFilter, search, setSearch, catFilter, setCatFilter, onCreate, onNotif, onDetail }) {
+const SORT_OPTIONS = [
+  { value: 'baru', label: 'Terbaru dulu' },
+  { value: 'lama', label: 'Terlama dulu' },
+  { value: 'progres', label: 'Progres tertinggi' },
+];
+const SORTERS = {
+  baru: (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+  lama: (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  progres: (a, b) => b.progress - a.progress || Date.parse(b.createdAt) - Date.parse(a.createdAt),
+};
+
+export function ReportsPage({ data, filter, setFilter, search, setSearch, catFilter, setCatFilter, sort, setSort, onCreate, onNotif, onDetail }) {
   const { c } = useTheme();
   const rc = useRC();
   const q = search.trim().toLowerCase();
-  const list = data.reports.filter((r) =>
+  const filtered = data.reports.filter((r) =>
     (filter === 'Semua' || r.status === filter) &&
     (catFilter === 'Semua' || r.category === catFilter) &&
     (!q || [r.title, r.description, r.location, r.id].some((t) => String(t || '').toLowerCase().includes(q))));
+  const list = [...filtered].sort(SORTERS[sort] || SORTERS.baru);
   const filtering = filter !== 'Semua' || catFilter !== 'Semua' || !!q;
   const reset = () => { setFilter('Semua'); setCatFilter('Semua'); setSearch(''); };
   const total = data.reports.length;
@@ -70,12 +83,24 @@ export function ReportsPage({ data, filter, setFilter, search, setSearch, catFil
         <Dropdown label="Kategori" value={catFilter} options={catOptions} onChange={setCatFilter} />
         <Dropdown label="Status" value={filter} options={statusOptions} onChange={setFilter} />
       </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <Txt small secondary>{filtering ? `Menampilkan ${list.length} dari ${total} aduan` : `${total} aduan`}</Txt>
-        {filtering ? <Pressable onPress={reset} hitSlop={8}><Txt small bold style={{ color: c.link }}>Reset filter</Txt></Pressable> : null}
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Txt small secondary>{filtering ? `Menampilkan ${list.length} dari ${total} aduan` : `${total} aduan`}</Txt>
+          {filtering ? (
+            <Pressable onPress={reset} hitSlop={8} style={{ marginTop: 2 }}>
+              <Txt small bold style={{ color: c.link }}>Reset filter</Txt>
+            </Pressable>
+          ) : null}
+        </View>
+        <Dropdown compact icon="arrow-down-wide-short" label="Urutkan" value={sort} options={SORT_OPTIONS} onChange={setSort} />
       </View>
 
-      {list.length ? list.map((r) => <ReportCard key={r.id} r={r} onNotif={onNotif} onDetail={onDetail} />) : (
+      {list.length ? list.map((r, i) => (
+        <FadeIn key={r.id} delay={Math.min(i, 6) * 70} y={16}>
+          <ReportCard r={r} onNotif={onNotif} onDetail={onDetail} />
+        </FadeIn>
+      )) : (
         <Card style={{ alignItems: 'center', paddingVertical: 28 }}>
           <FontAwesome6 name={data.reports.length ? 'magnifying-glass' : 'file-circle-plus'} size={26} color="#60a5fa" />
           <Txt bold style={{ marginTop: 12 }}>{data.reports.length ? 'Tidak ada aduan yang cocok' : 'Belum ada aduan'}</Txt>

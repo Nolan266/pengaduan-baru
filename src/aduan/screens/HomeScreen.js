@@ -6,9 +6,11 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { CATEGORY_UI, SURVEI, CAMERAS, NEWS } from '../constants';
+import { EmergencyCard } from '../EmergencyCard';
 import { CctvVideo } from '../media';
 import { useTheme, useRC } from '../theme';
-import { Txt, Card, Btn, Badge, Progress, Avatar } from '../ui';
+import { BigAvatar } from '../tg';
+import { Txt, Card, Btn, Badge, Progress } from '../ui';
 
 function NewsCarousel() {
   const { width } = useWindowDimensions();
@@ -108,7 +110,7 @@ function CctvCard() {
   );
 }
 
-export function HomePage({ data, go, onCreate, onVote }) {
+export function HomePage({ data, go, onCreate, onVote, onStatus }) {
   const { c } = useTheme();
   const rc = useRC();
   const [vote, setVote] = useState(null);
@@ -117,7 +119,11 @@ export function HomePage({ data, go, onCreate, onVote }) {
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} refreshControl={rc}>
       <Card style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, borderRadius: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-          <Avatar size={40} uri={data.profile.foto} />
+          <View style={{ width: 40, height: 40 }}>
+            <BigAvatar uri={data.profile.foto} name={data.profile.name} size={40} />
+            <View style={{ position: 'absolute', right: 0, bottom: 1, width: 10, height: 10, borderRadius: 5,
+              backgroundColor: '#10b981', borderWidth: 2, borderColor: c.surface }} />
+          </View>
           <View style={{ flex: 1 }}>
             <Txt secondary style={{ fontSize: 10 }}>Warga Terverifikasi</Txt>
             <Txt bold style={{ fontSize: 14, color: c.title }}>{data.profile.name}</Txt>
@@ -141,6 +147,21 @@ export function HomePage({ data, go, onCreate, onVote }) {
           </Pressable>
         ))}
       </View>
+
+      {data.reports.length > 0 && (
+        <>
+          <Txt bold style={{ marginBottom: 8 }}>Ringkasan Aduan</Txt>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+            {[['Dibuat', '#b45309', '#fef3c7'], ['Diproses', '#3730a3', '#e0e7ff'], ['Selesai', '#065f46', '#d1fae5']].map(([st, fg, bg]) => (
+              <Pressable key={st} onPress={() => onStatus(st)}
+                style={({ pressed }) => ({ flex: 1, borderRadius: 14, paddingVertical: 12, alignItems: 'center', backgroundColor: bg, opacity: pressed ? 0.8 : 1 })}>
+                <Text style={{ fontSize: 22, fontWeight: '800', color: fg }}>{data.reports.filter((x) => x.status === st).length}</Text>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: fg }}>{st}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      )}
 
       {r ? (
         <Card>
@@ -167,6 +188,7 @@ export function HomePage({ data, go, onCreate, onVote }) {
         ) : <Txt small style={{ color: c.indigoTitle, paddingVertical: 8 }}>Terima kasih atas penilaian Anda {SURVEI[vote].emoji}</Txt>}
       </View>
 
+      <EmergencyCard />
       <CctvCard />
     </ScrollView>
   );

@@ -87,19 +87,27 @@ export function PageTop({ title, right }) {
   );
 }
 
-export function Dropdown({ label, value, options, onChange }) {
+// compact: tanpa label di atas, ukuran mengikuti isi (tombol kecil di sebelah teks)
+// field: tampilan seperti input form (label tebal, latar sama dengan Field)
+// icon: ikon opsional di kiri teks
+export function Dropdown({ label, value, options, onChange, compact, icon, field }) {
   const { c } = useTheme();
   const [open, setOpen] = useState(false);
   const cur = options.find((o) => o.value === value) || options[0];
-  const active = value !== options[0].value;
+  const active = !field && value !== options[0].value;
   return (
-    <View style={{ flex: 1 }}>
-      <Txt small secondary style={{ marginBottom: 4 }}>{label}</Txt>
+    <View style={field ? { marginVertical: 8 } : compact ? undefined : { flex: 1 }}>
+      {!compact && (field
+        ? <Txt small bold style={{ marginBottom: 5, fontSize: 12 }}>{label}</Txt>
+        : <Txt small secondary style={{ marginBottom: 4 }}>{label}</Txt>)}
       <Pressable onPress={() => setOpen(true)}
-        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-          borderWidth: 1, borderColor: active ? '#2563eb' : c.edge, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12,
-          backgroundColor: c.surface, opacity: pressed ? 0.8 : 1 })}>
-        <Text numberOfLines={1} style={{ flex: 1, color: active ? c.link : c.ink, fontSize: 13, fontWeight: '600' }}>{cur.label}</Text>
+        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: compact ? 6 : 8,
+          borderWidth: 1, borderColor: active ? '#2563eb' : c.edge, borderRadius: 10,
+          paddingVertical: compact ? 6 : 10, paddingHorizontal: compact ? 10 : 12,
+          backgroundColor: field ? c.screen : c.surface, opacity: pressed ? 0.8 : 1 })}>
+        {icon ? <FontAwesome6 name={icon} size={11} color={active ? c.link : c.secondary} /> : null}
+        <Text numberOfLines={1} style={{ flex: compact ? undefined : 1, color: active ? c.link : c.ink,
+          fontSize: compact ? 12 : 13, fontWeight: '600' }}>{cur.label}</Text>
         <FontAwesome6 name="chevron-down" size={11} color={c.secondary} />
       </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>

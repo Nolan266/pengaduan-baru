@@ -7,7 +7,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { TabBar } from '../aduan/TabBar';
 import { THEME_KEY } from '../aduan/constants';
+import { loadCache, saveCache } from '../aduan/cache';
 import { fromPelapor, mapReport, mapEvent } from '../aduan/format';
+import { useOnline } from '../aduan/net';
 import { addFile, shrinkAvatar } from '../aduan/photos';
 import { HomePage } from '../aduan/screens/HomeScreen';
 import { NewReportPage } from '../aduan/screens/NewReportScreen';
@@ -23,7 +25,10 @@ export default function App() {
   const { session, logout } = useAuth(); // login & sesi diurus AuthGate
   const uid = session.pelapor.id_pelapor;
   const READ_KEY = `aduan-read-${uid}`;
+  const CACHE_KEY = `aduan-cache-${uid}`;
+  const DRAFT_KEY = `aduan-draft-${uid}`;
 
+  const online = useOnline();
   const system = useColorScheme();
   const [pref, setPref] = useState('auto');
   const [data, setData] = useState({ profile: fromPelapor(session.pelapor), reports: [], events: [], read: [] });
@@ -44,31 +49,42 @@ export default function App() {
   const [editingReport, setEditingReport] = useState(null);
   const [notifOnly, setNotifOnly] = useState(null);
 
-  // Ambil semua data milik akun ini dari server
+  // Ambil semua data milik akun ini dari server, lalu simpan salinannya untuk mode offline
   const refresh = useCallback(async () => {
     try {
       const [me, aduan, notif, kat] = await Promise.all([
         authFetch('/api/me'), authFetch('/api/aduan'), authFetch('/api/notifikasi'), authFetch('/api/kategori'),
       ]);
+      const reports = aduan.map(mapReport);
+      const events = notif.map(mapEvent);
       setKategori(kat);
-      setData((d) => ({ ...d, profile: fromPelapor(me), reports: aduan.map(mapReport), events: notif.map(mapEvent) }));
+      setData((d) => ({ ...d, profile: fromPelapor(me), reports, events }));
+      saveCache(CACHE_KEY, { kategori: kat, reports, events });
       setLoadErr('');
     } catch (e) {
       if (/Sesi habis|Belum login/.test(e.message)) { logout(); return; }
       setLoadErr(e.message || 'Gagal memuat data.');
     }
-  }, [logout]);
+  }, [logout, CACHE_KEY]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [t, r] = await Promise.all([AsyncStorage.getItem(THEME_KEY), AsyncStorage.getItem(READ_KEY)]);
+        const [t, r, cached] = await Promise.all([
+          AsyncStorage.getItem(THEME_KEY), AsyncStorage.getItem(READ_KEY), loadCache(CACHE_KEY),
+        ]);
         if (t && ['auto', 'light', 'dark'].includes(t)) setPref(t);
         if (r) setData((d) => ({ ...d, read: JSON.parse(r) }));
+        // Tampilkan data tersimpan dulu; ditimpa data terbaru begitu refresh() berhasil
+        if (cached) {
+          setKategori((k) => (k.length ? k : cached.kategori || []));
+          setData((d) => (d.reports.length || d.events.length ? d
+            : { ...d, reports: cached.reports || [], events: cached.events || [] }));
+        }
       } catch {}
     })();
     refresh();
-  }, [refresh, READ_KEY]);
+  }, [refresh, READ_KEY, CACHE_KEY]);
 
   // Refresh otomatis tiap 30 detik (hanya saat app terbuka) dan saat app kembali dibuka
   useEffect(() => {
@@ -76,6 +92,9 @@ export default function App() {
     const sub = AppState.addEventListener('change', (st) => { if (st === 'active') refresh(); });
     return () => { clearInterval(id); sub.remove(); };
   }, [refresh]);
+
+  // Begitu internet tersambung lagi, muat ulang data
+  useEffect(() => { if (online) refresh(); }, [online, refresh]);
 
   const dark = pref === 'auto' ? system === 'dark' : pref === 'dark';
   const theme = useMemo(() => ({ c: dark ? DARK : LIGHT, dark }), [dark]);
@@ -194,7 +213,7 @@ export default function App() {
 
   let body;
   if (page === 'reports' && creating) {
-    body = <NewReportPage initialCategory={creating.category} kategori={kategori}
+    body = <NewReportPage initialCategory={creating.category} kategori={kategori} draftKey={DRAFT_KEY}
       onCancel={() => setCreating(null)} onSubmit={submitReport} />;
   } else if (page === 'reports' && editingReport) {
     body = <EditReportPage r={editingReport} kategori={kategori} onCancel={() => setEditingReport(null)}
@@ -221,7 +240,8 @@ export default function App() {
       <StatusBar style={dark ? 'light' : 'dark'} />
       <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.screen }}>
         {themeToggle}
-        {!!loadErr && (
+        {/* Saat offline, badge di atas tab bar yang bicara; banner merah disembunyikan */}
+        {!!loadErr && online && (
           <Pressable onPress={refresh} style={{ backgroundColor: '#fee2e2', paddingVertical: 8, paddingHorizontal: 16 }}>
             <Text style={{ color: '#991b1b', fontSize: 11 }}>{loadErr} Ketuk untuk coba lagi.</Text>
           </Pressable>

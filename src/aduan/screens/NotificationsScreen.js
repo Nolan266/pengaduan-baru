@@ -4,6 +4,7 @@ import { View, ScrollView } from 'react-native';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { stamp } from '../format';
 import { useRC } from '../theme';
+import { FadeIn } from '../tg';
 import { Txt, Card, Btn, PageTop } from '../ui';
 
 export function NotificationsPage({ data, only, onReadAll, onAll, onOpen }) {
@@ -16,8 +17,9 @@ export function NotificationsPage({ data, only, onReadAll, onAll, onOpen }) {
         <Txt small secondary style={{ flex: 1 }}>Pemberitahuan perkembangan aduan Anda.</Txt>
         {only ? <Btn title="Semua" onPress={onAll} /> : null}
       </View>
-      {entries.length ? entries.map((e) => (
-        <Card key={e.id} style={!data.read.includes(e.id) ? { borderLeftWidth: 3, borderLeftColor: '#3b82f6' } : null}>
+      {entries.length ? entries.map((e, i) => (
+        <FadeIn key={e.id} delay={Math.min(i, 6) * 70} y={16}>
+        <Card style={!data.read.includes(e.id) ? { borderLeftWidth: 3, borderLeftColor: '#3b82f6' } : null}>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center' }}>
               <FontAwesome6 name={e.icon} size={14} color="#2563eb" />
@@ -33,6 +35,7 @@ export function NotificationsPage({ data, only, onReadAll, onAll, onOpen }) {
             </View>
           </View>
         </Card>
+        </FadeIn>
       )) : <Card><Txt style={{ textAlign: 'center', padding: 16 }}>Belum ada notifikasi.</Txt></Card>}
     </ScrollView>
   );
